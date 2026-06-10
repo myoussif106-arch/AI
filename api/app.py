@@ -3,7 +3,6 @@ from datetime import datetime
 from flask import Flask, jsonify, render_template_string, request
 import google.generativeai as genai
 import psycopg2  # المكتبة المسؤولة عن الاتصال بـ PostgreSQL
-
 app = Flask(__name__)
 
 # 1. إعداد مفتاح جيمني من البيئة
