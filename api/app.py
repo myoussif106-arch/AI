@@ -1,5 +1,5 @@
 import os
-from flask import Flask, jsonify, render_template_string, request, redirect
+from flask import Flask, jsonify, render_template, request, redirect, url_for
 import google.generativeai as genai
 import psycopg2
 
@@ -34,7 +34,23 @@ def save_interaction(question, response):
     except Exception as e:
         print(f"Silent DB Error: {e}")
 
-# واجهة المستخدم الصافية مع أزرار اللايك والديسلايك
+def get_feedback_counts():
+    likes = 0
+    dislikes = 0
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM site_feedback WHERE action_type = 'like'")
+        likes = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM site_feedback WHERE action_type = 'dislike'")
+        dislikes = cursor.fetchone()[0]
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        print(f"Error fetching counts: {e}")
+    return likes, dislikes
+
+# واجهة المستخدم المحدثة بالعدادات الذكية والـ LocalStorage
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -60,14 +76,16 @@ HTML_TEMPLATE = """
         .loading { display: none; margin: 25px 0; color: var(--neon-blue); font-weight: 600; text-align: center; }
         .response-card { margin-top: 30px; padding: 25px; background: #1f242c; border-radius: 16px; color: #e6edf3; line-height: 1.8; display: none; border-left: 4px solid var(--neon-purple); border-right: 4px solid var(--neon-blue); white-space: pre-wrap; text-align: right; }
         
-        /* استايل منطقة أزرار التقييم */
+        /* استايل منطقة أزرار التقييم بالعدادات */
         .feedback-section { margin-top: 40px; display: flex; flex-direction: column; align-items: center; gap: 12px; padding-top: 25px; border-top: 1px solid var(--border-color); }
         .feedback-title { font-size: 14px; color: #8b949e; font-weight: 600; }
         .feedback-buttons { display: flex; gap: 20px; }
-        .feedback-btn { background: #090d13; border: 1px solid var(--border-color); color: var(--text-light); padding: 10px 25px; border-radius: 12px; cursor: pointer; font-family: 'Cairo'; font-size: 14px; display: flex; align-items: center; gap: 8px; transition: all 0.3s ease; }
+        .feedback-btn { background: #090d13; border: 1px solid var(--border-color); color: var(--text-light); padding: 10px 22px; border-radius: 12px; cursor: pointer; font-family: 'Cairo'; font-size: 14px; display: flex; align-items: center; gap: 8px; transition: all 0.3s ease; }
+        .feedback-btn .count { font-weight: bold; background: #21262d; padding: 2px 8px; border-radius: 20px; font-size: 12px; }
         .feedback-btn.like:hover { border-color: #2ea043; color: #2ea043; box-shadow: 0 0 10px rgba(46, 160, 67, 0.2); }
         .feedback-btn.dislike:hover { border-color: #f85149; color: #f85149; box-shadow: 0 0 10px rgba(248, 81, 73, 0.2); }
-        .feedback-btn:disabled { opacity: 0.5; cursor: not-allowed; pointer-events: none; }
+        .feedback-btn:disabled { opacity: 0.6; cursor: not-allowed; pointer-events: none; }
+        .feedback-btn.voted { border-color: #58a6ff !important; color: #58a6ff !important; }
     </style>
 </head>
 <body>
@@ -88,18 +106,44 @@ HTML_TEMPLATE = """
     <div id="responseCard" class="response-card"></div>
     
     <div class="feedback-section">
-        <div class="feedback-title">ما هو تقييمك للمنصة؟</div>
+        <div class="feedback-title" id="feedbackTitle">ما هو تقييمك للمنصة؟</div>
         <div class="feedback-buttons">
             <button class="feedback-btn like" id="likeBtn" onclick="sendFeedback('like')">
-                <i class="far fa-thumbs-up"></i> أعجبني
+                <i class="far fa-thumbs-up"></i> أعجبني <span class="count" id="likeCount">{{ likes }}</span>
             </button>
             <button class="feedback-btn dislike" id="dislikeBtn" onclick="sendFeedback('dislike')">
-                <i class="far fa-thumbs-down"></i> لم يعجبني
+                <i class="far fa-thumbs-down"></i> لم يعجبني <span class="count" id="dislikeCount">{{ dislikes }}</span>
             </button>
         </div>
     </div>
 </div>
 <script>
+// فحص هل المستخدم قّيم الموقع قبل كده أول ما الصفحة تفتح
+document.addEventListener("DOMContentLoaded", () => {
+    const hasVoted = localStorage.getItem("synapse_voted");
+    if (hasVoted) {
+        disableFeedbackButtons(hasVoted);
+    }
+});
+
+function disableFeedbackButtons(votedType) {
+    const likeBtn = document.getElementById('likeBtn');
+    const dislikeBtn = document.getElementById('dislikeBtn');
+    const title = document.getElementById('feedbackTitle');
+    
+    likeBtn.disabled = true;
+    dislikeBtn.disabled = true;
+    title.innerText = "شكراً لتقييمك المنصة!";
+    
+    if (votedType === 'like') {
+        likeBtn.classList.add('voted');
+        likeBtn.innerHTML = '<i class="fas fa-thumbs-up"></i> تم الإعجاب <span class="count">' + document.getElementById('likeCount').innerText + '</span>';
+    } else if (votedType === 'dislike') {
+        dislikeBtn.classList.add('voted');
+        dislikeBtn.innerHTML = '<i class="fas fa-thumbs-down"></i> تم التقييم <span class="count">' + document.getElementById('dislikeCount').innerText + '</span>';
+    }
+}
+
 async function askQuestion() {
     const input = document.getElementById('questionInput');
     const responseCard = document.getElementById('responseCard');
@@ -116,28 +160,35 @@ async function askQuestion() {
 }
 
 async function sendFeedback(type) {
+    if (localStorage.getItem("synapse_voted")) return;
+    
     const likeBtn = document.getElementById('likeBtn');
     const dislikeBtn = document.getElementById('dislikeBtn');
+    const likeCountSpan = document.getElementById('likeCount');
+    const dislikeCountSpan = document.getElementById('dislikeCount');
     
-    // قفل الأزرار مؤقتاً لمنع التكرار البشري
     likeBtn.disabled = true;
     dislikeBtn.disabled = true;
     
     try {
-        await fetch('/feedback', {
+        const res = await fetch('/feedback', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ type: type })
         });
+        const data = await res.json();
         
-        if(type === 'like') {
-            likeBtn.innerHTML = '<i class="fas fa-thumbs-up"></i> شكراً لك!';
-            likeBtn.style.borderColor = '#2ea043';
-            likeBtn.style.color = '#2ea043';
-        } else {
-            dislikeBtn.innerHTML = '<i class="fas fa-thumbs-down"></i> تم التسجيل';
-            dislikeBtn.style.borderColor = '#f85149';
-            dislikeBtn.style.color = '#f85149';
+        if (data.status === 'success') {
+            // حفظ التقييم في متصفح المستخدم لمنعه للأبد
+            localStorage.setItem("synapse_voted", type);
+            
+            // تحديث العداد لايف قدام عينه فوراً
+            if (type === 'like') {
+                likeCountSpan.innerText = parseInt(likeCountSpan.innerText) + 1;
+            } else {
+                dislikeCountSpan.innerText = parseInt(dislikeCountSpan.innerText) + 1;
+            }
+            disableFeedbackButtons(type);
         }
     } catch (e) {
         likeBtn.disabled = false;
@@ -149,7 +200,7 @@ async function sendFeedback(type) {
 </html>
 """
 
-# لوحة السجلات السرية المحدثة
+# لوحة السجلات السرية
 LOGS_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -221,7 +272,9 @@ LOGS_TEMPLATE = """
 
 @app.route("/")
 def home():
-    return render_template_string(HTML_TEMPLATE)
+    # جلب الأعداد الحالية من الداتابيز لتمريرها للواجهة الرئيسية لايف
+    likes, dislikes = get_feedback_counts()
+    return render_template_string(HTML_TEMPLATE, likes=likes, dislikes=dislikes)
 
 @app.route("/ask", methods=["POST"])
 def ask():
@@ -250,7 +303,6 @@ def ask():
             
     return jsonify({"error": "الخادم مضغوط حالياً، يرجى إعادة إرسال النبضة بعد ثوانٍ."}), 500
 
-# الـ API السري المسؤول عن حفظ التقييمات بصمت
 @app.route("/feedback", methods=["POST"])
 def feedback():
     data = request.get_json()
@@ -270,24 +322,12 @@ def feedback():
 @app.route("/logs")
 def show_logs():
     rows = []
-    likes_count = 0
-    dislikes_count = 0
+    likes_count, dislikes_count = get_feedback_counts()
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
-        # جلب سجل المحادثات
         cursor.execute("SELECT id, user_question, ai_response FROM conversations ORDER BY id DESC")
         rows = cursor.fetchall()
-        
-        # جلب إحصائيات اللايك
-        cursor.execute("SELECT COUNT(*) FROM site_feedback WHERE action_type = 'like'")
-        likes_count = cursor.fetchone()[0]
-        
-        # جلب إحصائيات الديسلايك
-        cursor.execute("SELECT COUNT(*) FROM site_feedback WHERE action_type = 'dislike'")
-        dislikes_count = cursor.fetchone()[0]
-        
         cursor.close()
         conn.close()
     except Exception as e:
