@@ -1,5 +1,5 @@
 import os
-from flask import Flask, jsonify, render_template, request, redirect, url_for
+from flask import Flask, jsonify, render_template_string, request, redirect, url_for
 import google.generativeai as genai
 import psycopg2
 
@@ -32,6 +32,7 @@ def save_interaction(question, response):
         cursor.close()
         conn.close()
     except Exception as e:
+        # خطأ الداتابيز صامت تماماً ولا يظهر للمستخدم
         print(f"Silent DB Error: {e}")
 
 def get_feedback_counts():
@@ -47,7 +48,7 @@ def get_feedback_counts():
         cursor.close()
         conn.close()
     except Exception as e:
-        print(f"Error fetching counts: {e}")
+        print(f"Silent Feedback Fetch Error: {e}")
     return likes, dislikes
 
 # واجهة المستخدم المحدثة بالعدادات الذكية والـ LocalStorage
@@ -179,10 +180,8 @@ async function sendFeedback(type) {
         const data = await res.json();
         
         if (data.status === 'success') {
-            // حفظ التقييم في متصفح المستخدم لمنعه للأبد
             localStorage.setItem("synapse_voted", type);
             
-            // تحديث العداد لايف قدام عينه فوراً
             if (type === 'like') {
                 likeCountSpan.innerText = parseInt(likeCountSpan.innerText) + 1;
             } else {
@@ -272,8 +271,8 @@ LOGS_TEMPLATE = """
 
 @app.route("/")
 def home():
-    # جلب الأعداد الحالية من الداتابيز لتمريرها للواجهة الرئيسية لايف
     likes, dislikes = get_feedback_counts()
+    # استخدام render_template_string الصحيحة والمضمونة للعمل صامتاً
     return render_template_string(HTML_TEMPLATE, likes=likes, dislikes=dislikes)
 
 @app.route("/ask", methods=["POST"])
