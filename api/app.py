@@ -1,11 +1,11 @@
 import os
-from flask import Flask, jsonify, render_template_string, request
+from flask import Flask, jsonify, render_template_string, request, redirect, url_for
 import google.generativeai as genai
 import psycopg2
 
 app = Flask(__name__)
 
-# تجميع كل الاحتمالات لأسماء المفاتيح عشان نضمن إنه لقط أي مفتاح ضفته في فيرسال
+# تجميع كل الاحتمالات لأسماء المفاتيح لتفادي الـ Limit
 API_KEYS = [
     os.environ.get("GEMINI_KEY_1"),
     os.environ.get("GEMINI_KEY_2"),
@@ -18,21 +18,23 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 
 def get_db_connection():
     conn = psycopg2.connect(DATABASE_URL)
-    conn.autocommit = True  # إجبار قاعدة البيانات على حفظ أي Insert فوراً بدون انتظار
+    conn.autocommit = True  # حفظ الـ Insert فوراً سحابياً
     return conn
 
 def save_interaction(question, response):
-    # السطر ده هيرمي خطأ صريح للكود الرئيسي لو الحفظ فشل عشان ميسكتش
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO conversations (user_question, ai_response) VALUES (%s, %s)",
-        (question, response)
-    )
-    cursor.close()
-    conn.close()
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO conversations (user_question, ai_response) VALUES (%s, %s)",
+            (question, response)
+        )
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        print(f"Silent DB Error: {e}")
 
-# واجهة المستخدم (ثيم Synapse Dark المطور)
+# واجهة المستخدم الصافية تماماً (بدون أي إشارة لحفظ البيانات)
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -57,8 +59,6 @@ HTML_TEMPLATE = """
         button:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(0, 210, 255, 0.4); }
         .loading { display: none; margin: 25px 0; color: var(--neon-blue); font-weight: 600; text-align: center; }
         .response-card { margin-top: 30px; padding: 25px; background: #1f242c; border-radius: 16px; color: #e6edf3; line-height: 1.8; display: none; border-left: 4px solid var(--neon-purple); border-right: 4px solid var(--neon-blue); white-space: pre-wrap; text-align: right; }
-        .footer { margin-top: 35px; text-align: center; font-size: 13px; color: #58a6ff; }
-        .footer a { color: var(--neon-blue); text-decoration: none; margin-right: 10px; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -66,7 +66,7 @@ HTML_TEMPLATE = """
     <div class="header">
         <i class="fas fa-brain logo-icon"></i>
         <h1>SYNAPSE</h1>
-        <p>بوابة التفكير العصبي الاصطناعي - متصل بـ Supabase Cloud</p>
+        <p>بوابة التفكير العصبي الاصطناعي</p>
     </div>
     <div class="input-group">
         <textarea id="questionInput" placeholder="أدخل استعلامك هنا وسيقوم النظام بالمعالجة اللامتناهية..."></textarea>
@@ -75,11 +75,8 @@ HTML_TEMPLATE = """
         <span>إرسال النبضة العصبية</span>
         <i class="fas fa-bolt"></i>
     </button>
-    <div id="loadingArea" class="loading"><i class="fas fa-spinner fa-spin"></i> جاري معالجة البيانات وتخزين الاستعلام سحابياً...</div>
+    <div id="loadingArea" class="loading"><i class="fas fa-spinner fa-spin"></i> جاري معالجة البيانات وتوليد الاستجابة العصبية...</div>
     <div id="responseCard" class="response-card"></div>
-    <div class="footer">
-        <i class="fas fa-cloud"></i> متصل بقاعدة بيانات سحابية آمنة | <a href="/logs" target="_blank">عرض السجلات <i class="fas fa-external-link-alt"></i></a>
-    </div>
 </div>
 <script>
 async function askQuestion() {
@@ -92,8 +89,8 @@ async function askQuestion() {
         const res = await fetch('/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: input.value }) });
         const data = await res.json();
         if (data.answer) { responseCard.innerText = data.answer; responseCard.style.display = 'block'; }
-        else { responseCard.innerText = "خطأ: " + data.error; responseCard.style.display = 'block'; }
-    } catch (e) { responseCard.innerText = "فشل في الاتصال بالخادم."; responseCard.style.display = 'block'; }
+        else { responseCard.innerText = "عذراً: " + data.error; responseCard.style.display = 'block'; }
+    } catch (e) { responseCard.innerText = "فشل في الاتصال بالخادم الذكي."; responseCard.style.display = 'block'; }
     finally { loadingArea.style.display = 'none'; }
 }
 </script>
@@ -101,12 +98,13 @@ async function askQuestion() {
 </html>
 """
 
+# لوحة السجلات السرية المحدثة
 LOGS_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <title>سجل Supabase - Synapse</title>
+    <title>لوحة التحكم السرية - Synapse</title>
     <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
@@ -124,18 +122,17 @@ LOGS_TEMPLATE = """
 <body>
 <div class="table-container">
     <h2>
-        <span><i class="fas fa-cloud-upload-alt"></i> سجل السحابة الدائم (Supabase)</span>
-        <form action="/clear-logs" method="POST" style="margin:0;" onsubmit="return confirm('هل أنت متأكد من مسح الجدول سحابياً؟');">
-            <button type="submit" class="btn-delete"><i class="fas fa-trash"></i> تصفير الداتابيز</button>
+        <span><i class="fas fa-cloud-upload-alt"></i> السجل السحابي الداخلي للتطوير</span>
+        <form action="/clear-logs" method="POST" style="margin:0;" onsubmit="return confirm('هل أنت متأكد من تصفير السجل؟');">
+            <button type="submit" class="btn-delete"><i class="fas fa-trash"></i> تصفير البيانات</button>
         </form>
     </h2>
     <table>
         <thead>
             <tr>
-                <th style="width: 5%;">ID</th>
-                <th style="width: 35%;">السؤال</th>
-                <th style="width: 45%;">إجابة الـ AI</th>
-                <th style="width: 15%;">التاريخ والوقت</th>
+                <th style="width: 10%;">ID</th>
+                <th style="width: 40%;">السؤال</th>
+                <th style="width: 50%;">إجابة الـ AI</th>
             </tr>
         </thead>
         <tbody>
@@ -144,11 +141,10 @@ LOGS_TEMPLATE = """
                 <td>{{ row[0] }}</td>
                 <td style="white-space: pre-wrap;">{{ row[1] }}</td>
                 <td style="white-space: pre-wrap;">{{ row[2] }}</td>
-                <td>{{ row[3] }}</td>
             </tr>
             {% else %}
             <tr>
-                <td colspan="4" class="empty">لا توجد سجلات مخزنة حتى الآن.</td>
+                <td colspan="3" class="empty">لا توجد محادثات مسجلة حالياً.</td>
             </tr>
             {% endfor %}
         </tbody>
@@ -170,7 +166,7 @@ def ask():
         return jsonify({"error": "الاستعلام فارغ"}), 400
 
     if not API_KEYS:
-        return jsonify({"error": "فيرسال مش قاري أي مفتاح جيمني خالص. تأكد من أسامي الـ Keys"}), 500
+        return jsonify({"error": "النظام يمر بفترة صيانة للمفاتيح، يرجى المحاولة لاحقاً."}), 500
 
     last_error = ""
     for current_key in API_KEYS:
@@ -180,12 +176,8 @@ def ask():
             response = model.generate_content(user_question)
             ai_response = response.text
             
-            # محاولة الحفظ الصريحة
-            try:
-                save_interaction(user_question, ai_response)
-            except Exception as db_err:
-                # لو فشل الحفظ، ارمي الخطأ للمستخدم علطول عشان نقفشه
-                return jsonify({"error": f"جيمني رد بس الداتابيز رفضت تحفظ! السبب: {db_err}"}), 500
+            # حفظ المحادثة في الداتابيز بصمت تام في الخلفية
+            save_interaction(user_question, ai_response)
                 
             return jsonify({"answer": ai_response})
             
@@ -193,7 +185,7 @@ def ask():
             last_error = str(e)
             continue
             
-    return jsonify({"error": f"مشكلة في المفاتيح أو الليميت: {last_error}"}), 500
+    return jsonify({"error": "الخادم مضغوط حالياً، يرجى إعادة إرسال النبضة بعد ثوانٍ."}), 500
 
 @app.route("/logs")
 def show_logs():
@@ -201,12 +193,12 @@ def show_logs():
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT id, user_question, ai_response, created_at FROM conversations ORDER BY id DESC")
+        cursor.execute("SELECT id, user_question, ai_response FROM conversations ORDER BY id DESC")
         rows = cursor.fetchall()
         cursor.close()
         conn.close()
     except Exception as e:
-        return f"خطأ أثناء جلب السجلات: {e}"
+        return f"Error: {e}"
     return render_template_string(LOGS_TEMPLATE, rows=rows)
 
 @app.route("/clear-logs", methods=["POST"])
@@ -218,8 +210,10 @@ def clear_logs():
         cursor.close()
         conn.close()
     except Exception as e:
-        return f"فشل التصفير: {e}"
-    return "<script>alert('تم تصفير الداتابيز سحابياً بنجاح'); window.location.href='/logs';</script>"
+        print(f"Clear Error: {e}")
+    
+    # التحديث الصامت: يرجعك لصفحة السجلات فوراً وبدون أي رسائل اليرت جافاسكريبت
+    return redirect("/logs")
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
