@@ -201,7 +201,7 @@ def show_logs():
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT id, user_question, ai_response FROM conversations ORDER BY id DESC")
+        cursor.execute("SELECT id, user_question, ai_response, created_at FROM conversations ORDER BY id DESC")
         rows = cursor.fetchall()
         cursor.close()
         conn.close()
