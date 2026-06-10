@@ -1,5 +1,5 @@
 import os
-from flask import Flask, jsonify, render_template_string, request, redirect, url_for
+from flask import Flask, jsonify, render_template_string, request, redirect
 import google.generativeai as genai
 import psycopg2
 
@@ -18,7 +18,7 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 
 def get_db_connection():
     conn = psycopg2.connect(DATABASE_URL)
-    conn.autocommit = True  # حفظ الـ Insert فوراً سحابياً
+    conn.autocommit = True  # حفظ التعديلات فوراً سحابياً
     return conn
 
 def save_interaction(question, response):
@@ -34,7 +34,7 @@ def save_interaction(question, response):
     except Exception as e:
         print(f"Silent DB Error: {e}")
 
-# واجهة المستخدم الصافية تماماً (بدون أي إشارة لحفظ البيانات)
+# واجهة المستخدم الصافية مع أزرار اللايك والديسلايك
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -55,10 +55,19 @@ HTML_TEMPLATE = """
         .header p { color: #8b949e; font-size: 15px; margin-top: 8px; }
         textarea { width: 100%; height: 130px; padding: 20px; border-radius: 16px; border: 2px solid var(--border-color); font-family: 'Cairo', sans-serif; font-size: 16px; resize: none; outline: none; box-sizing: border-box; background: #090d13; color: var(--text-bright); }
         textarea:focus { border-color: var(--neon-blue); box-shadow: 0 0 15px rgba(0, 210, 255, 0.2); }
-        button { width: 100%; background: linear-gradient(90deg, var(--neon-blue), var(--neon-purple)); color: white; border: none; padding: 16px; border-radius: 16px; font-family: 'Cairo', sans-serif; font-size: 18px; font-weight: bold; cursor: pointer; display: flex; justify-content: center; align-items: center; gap: 12px; margin-top: 15px; }
-        button:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(0, 210, 255, 0.4); }
+        button.btn-main { width: 100%; background: linear-gradient(90deg, var(--neon-blue), var(--neon-purple)); color: white; border: none; padding: 16px; border-radius: 16px; font-family: 'Cairo', sans-serif; font-size: 18px; font-weight: bold; cursor: pointer; display: flex; justify-content: center; align-items: center; gap: 12px; margin-top: 15px; }
+        button.btn-main:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(0, 210, 255, 0.4); }
         .loading { display: none; margin: 25px 0; color: var(--neon-blue); font-weight: 600; text-align: center; }
         .response-card { margin-top: 30px; padding: 25px; background: #1f242c; border-radius: 16px; color: #e6edf3; line-height: 1.8; display: none; border-left: 4px solid var(--neon-purple); border-right: 4px solid var(--neon-blue); white-space: pre-wrap; text-align: right; }
+        
+        /* استايل منطقة أزرار التقييم */
+        .feedback-section { margin-top: 40px; display: flex; flex-direction: column; align-items: center; gap: 12px; padding-top: 25px; border-top: 1px solid var(--border-color); }
+        .feedback-title { font-size: 14px; color: #8b949e; font-weight: 600; }
+        .feedback-buttons { display: flex; gap: 20px; }
+        .feedback-btn { background: #090d13; border: 1px solid var(--border-color); color: var(--text-light); padding: 10px 25px; border-radius: 12px; cursor: pointer; font-family: 'Cairo'; font-size: 14px; display: flex; align-items: center; gap: 8px; transition: all 0.3s ease; }
+        .feedback-btn.like:hover { border-color: #2ea043; color: #2ea043; box-shadow: 0 0 10px rgba(46, 160, 67, 0.2); }
+        .feedback-btn.dislike:hover { border-color: #f85149; color: #f85149; box-shadow: 0 0 10px rgba(248, 81, 73, 0.2); }
+        .feedback-btn:disabled { opacity: 0.5; cursor: not-allowed; pointer-events: none; }
     </style>
 </head>
 <body>
@@ -71,12 +80,24 @@ HTML_TEMPLATE = """
     <div class="input-group">
         <textarea id="questionInput" placeholder="أدخل استعلامك هنا وسيقوم النظام بالمعالجة اللامتناهية..."></textarea>
     </div>
-    <button onclick="askQuestion()">
+    <button class="btn-main" onclick="askQuestion()">
         <span>إرسال النبضة العصبية</span>
         <i class="fas fa-bolt"></i>
     </button>
     <div id="loadingArea" class="loading"><i class="fas fa-spinner fa-spin"></i> جاري معالجة البيانات وتوليد الاستجابة العصبية...</div>
     <div id="responseCard" class="response-card"></div>
+    
+    <div class="feedback-section">
+        <div class="feedback-title">ما هو تقييمك للمنصة؟</div>
+        <div class="feedback-buttons">
+            <button class="feedback-btn like" id="likeBtn" onclick="sendFeedback('like')">
+                <i class="far fa-thumbs-up"></i> أعجبني
+            </button>
+            <button class="feedback-btn dislike" id="dislikeBtn" onclick="sendFeedback('dislike')">
+                <i class="far fa-thumbs-down"></i> لم يعجبني
+            </button>
+        </div>
+    </div>
 </div>
 <script>
 async function askQuestion() {
@@ -92,6 +113,36 @@ async function askQuestion() {
         else { responseCard.innerText = "عذراً: " + data.error; responseCard.style.display = 'block'; }
     } catch (e) { responseCard.innerText = "فشل في الاتصال بالخادم الذكي."; responseCard.style.display = 'block'; }
     finally { loadingArea.style.display = 'none'; }
+}
+
+async function sendFeedback(type) {
+    const likeBtn = document.getElementById('likeBtn');
+    const dislikeBtn = document.getElementById('dislikeBtn');
+    
+    // قفل الأزرار مؤقتاً لمنع التكرار البشري
+    likeBtn.disabled = true;
+    dislikeBtn.disabled = true;
+    
+    try {
+        await fetch('/feedback', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: type })
+        });
+        
+        if(type === 'like') {
+            likeBtn.innerHTML = '<i class="fas fa-thumbs-up"></i> شكراً لك!';
+            likeBtn.style.borderColor = '#2ea043';
+            likeBtn.style.color = '#2ea043';
+        } else {
+            dislikeBtn.innerHTML = '<i class="fas fa-thumbs-down"></i> تم التسجيل';
+            dislikeBtn.style.borderColor = '#f85149';
+            dislikeBtn.style.color = '#f85149';
+        }
+    } catch (e) {
+        likeBtn.disabled = false;
+        dislikeBtn.disabled = false;
+    }
 }
 </script>
 </body>
@@ -109,7 +160,7 @@ LOGS_TEMPLATE = """
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
         body { font-family: 'Cairo', sans-serif; background-color: #0d1117; color: #c9d1d9; padding: 30px; }
-        .table-container { max-width: 1000px; margin: 0 auto; background: #161b22; padding: 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); border: 1px solid #30363d; }
+        .table-container { max-width: 1000px; margin: 0 auto; background: #161b22; padding: 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); border: 1px solid #30363d; margin-bottom: 30px; }
         h2 { color: #fff; border-bottom: 2px solid #30363d; padding-bottom: 15px; display: flex; justify-content: space-between; align-items: center; }
         table { width: 100%; border-collapse: collapse; margin-top: 20px; }
         th, td { padding: 15px; text-align: right; border-bottom: 1px solid #30363d; }
@@ -117,9 +168,23 @@ LOGS_TEMPLATE = """
         tr:hover { background-color: #1f242c; }
         .btn-delete { background: #f85149; color: white; border: none; padding: 8px 15px; border-radius: 6px; cursor: pointer; font-family: 'Cairo'; }
         .empty { text-align: center; padding: 30px; color: #8b949e; }
+        .stats-box { display: flex; gap: 20px; margin-top: 15px; }
+        .stat-card { background: #090d13; border: 1px solid #30363d; padding: 10px 20px; border-radius: 10px; font-size: 16px; }
+        .stat-card.likes { color: #2ea043; }
+        .stat-card.dislikes { color: #f85149; }
     </style>
 </head>
 <body>
+<div class="table-container">
+    <h2>
+        <span><i class="fas fa-chart-bar"></i> إحصائيات تفاعل الموقع الإجمالية</span>
+    </h2>
+    <div class="stats-box">
+        <div class="stat-card likes"><i class="fas fa-thumbs-up"></i> إجمالي الإعجابات: <strong>{{ likes_count }}</strong></div>
+        <div class="stat-card dislikes"><i class="fas fa-thumbs-down"></i> إجمالي عدم الإعجاب: <strong>{{ dislikes_count }}</strong></div>
+    </div>
+</div>
+
 <div class="table-container">
     <h2>
         <span><i class="fas fa-cloud-upload-alt"></i> السجل السحابي الداخلي للتطوير</span>
@@ -176,9 +241,7 @@ def ask():
             response = model.generate_content(user_question)
             ai_response = response.text
             
-            # حفظ المحادثة في الداتابيز بصمت تام في الخلفية
             save_interaction(user_question, ai_response)
-                
             return jsonify({"answer": ai_response})
             
         except Exception as e:
@@ -187,19 +250,49 @@ def ask():
             
     return jsonify({"error": "الخادم مضغوط حالياً، يرجى إعادة إرسال النبضة بعد ثوانٍ."}), 500
 
+# الـ API السري المسؤول عن حفظ التقييمات بصمت
+@app.route("/feedback", methods=["POST"])
+def feedback():
+    data = request.get_json()
+    action_type = data.get("type", "")
+    if action_type in ['like', 'dislike']:
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("INSERT INTO site_feedback (action_type) VALUES (%s)", (action_type,))
+            cursor.close()
+            conn.close()
+            return jsonify({"status": "success"})
+        except Exception as e:
+            print(f"Feedback Save Error: {e}")
+    return jsonify({"status": "ignored"}), 400
+
 @app.route("/logs")
 def show_logs():
     rows = []
+    likes_count = 0
+    dislikes_count = 0
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
+        
+        # جلب سجل المحادثات
         cursor.execute("SELECT id, user_question, ai_response FROM conversations ORDER BY id DESC")
         rows = cursor.fetchall()
+        
+        # جلب إحصائيات اللايك
+        cursor.execute("SELECT COUNT(*) FROM site_feedback WHERE action_type = 'like'")
+        likes_count = cursor.fetchone()[0]
+        
+        # جلب إحصائيات الديسلايك
+        cursor.execute("SELECT COUNT(*) FROM site_feedback WHERE action_type = 'dislike'")
+        dislikes_count = cursor.fetchone()[0]
+        
         cursor.close()
         conn.close()
     except Exception as e:
         return f"Error: {e}"
-    return render_template_string(LOGS_TEMPLATE, rows=rows)
+    return render_template_string(LOGS_TEMPLATE, rows=rows, likes_count=likes_count, dislikes_count=dislikes_count)
 
 @app.route("/clear-logs", methods=["POST"])
 def clear_logs():
@@ -211,8 +304,6 @@ def clear_logs():
         conn.close()
     except Exception as e:
         print(f"Clear Error: {e}")
-    
-    # التحديث الصامت: يرجعك لصفحة السجلات فوراً وبدون أي رسائل اليرت جافاسكريبت
     return redirect("/logs")
 
 if __name__ == "__main__":
