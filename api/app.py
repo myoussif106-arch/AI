@@ -1,44 +1,43 @@
 import os
-import sqlite3
 from datetime import datetime
 from flask import Flask, jsonify, render_template_string, request
 import google.generativeai as genai
+import psycopg2  # المكتبة المسؤولة عن الاتصال بـ PostgreSQL
 
 app = Flask(__name__)
 
-# 1. إعداد مفتاح جيمني - يقرأ تلقائياً من الـ Environment Variables في فيرسال بأمان
+# 1. إعداد مفتاح جيمني من البيئة
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
 
+# 2. الحصول على رابط قاعدة بيانات Supabase من البيئة
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
-# 2. الدالة المضمونة لإنشاء الجدول وحفظ البيانات فوراً في بيئة الـ Serverless
+
+# دالة الاتصال الآمن بـ Supabase
+def get_db_connection():
+    # يتصل بالسيرفر السحابي مباشرة باستخدام الـ URI
+    return psycopg2.connect(DATABASE_URL)
+
+
+# 3. دالة حفظ البيانات في Supabase
 def save_interaction(question, response):
-    # استخدام المسار /tmp/ المسموح بالكتابة عليه جوه سيرفرات Vercel
-    with sqlite3.connect("/tmp/database.db") as conn:
+    try:
+        conn = get_db_connection()
         cursor = conn.cursor()
-
-        # نضمن أولاً إن الجدول موجود في كل مرة بيتبعت فيها سؤال
+        # هنا الـ SQL مخصص لـ PostgreSQL
         cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS conversations (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_question TEXT NOT NULL,
-                ai_response TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            )
-        """
-        )
-
-        # إدخال البيانات وحفظها فوراً
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        cursor.execute(
-            "INSERT INTO conversations (user_question, ai_response, created_at) VALUES (?, ?, ?)",
-            (question, response, current_time),
+            "INSERT INTO conversations (user_question, ai_response) VALUES (%s, %s)",
+            (question, response),
         )
         conn.commit()
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        print(f"Database Error: {e}")
 
 
-# 3. واجهة المستخدم الاحترافية الثيم الغامق (Synapse Dark Tech)
+# 4. واجهات العرض (نفس ثيم Synapse الاحترافي الغامق)
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -48,244 +47,118 @@ HTML_TEMPLATE = """
     <title>Synapse AI - التفكير العصبي الرقمي</title>
     <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-    
     <style>
-        :root {
-            --bg-dark: #0d1117;
-            --card-dark: #161b22;
-            --neon-blue: #00d2ff;
-            --neon-purple: #a855f7;
-            --text-light: #c9d1d9;
-            --text-bright: #ffffff;
-            --border-color: #30363d;
-        }
-
-        body {
-            font-family: 'Cairo', sans-serif;
-            background-color: var(--bg-dark);
-            background-image: radial-gradient(circle at 50% 50%, #161b33 0%, #0d1117 100%);
-            margin: 0;
-            padding: 0;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            color: var(--text-light);
-        }
-
-        .container {
-            width: 90%;
-            max-width: 700px;
-            background: var(--card-dark);
-            padding: 40px;
-            border-radius: 24px;
-            box-shadow: 0 20px 50px rgba(0, 210, 255, 0.05), 0 0 0 1px var(--border-color);
-            position: relative;
-            overflow: hidden;
-        }
-
-        .container::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 4px;
-            background: linear-gradient(90deg, var(--neon-blue), var(--neon-purple));
-        }
-
-        .header {
-            text-align: center;
-            margin-bottom: 35px;
-        }
-
-        .header .logo-icon {
-            font-size: 55px;
-            background: linear-gradient(45deg, var(--neon-blue), var(--neon-purple));
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            margin-bottom: 15px;
-            filter: drop-shadow(0 0 10px rgba(0, 210, 255, 0.3));
-        }
-
-        .header h1 {
-            color: var(--text-bright);
-            margin: 0;
-            font-size: 32px;
-            font-weight: 800;
-            letter-spacing: 1px;
-        }
-
-        .header p {
-            color: #8b949e;
-            font-size: 15px;
-            margin-top: 8px;
-        }
-
-        textarea {
-            width: 100%;
-            height: 130px;
-            padding: 20px;
-            border-radius: 16px;
-            border: 2px solid var(--border-color);
-            font-family: 'Cairo', sans-serif;
-            font-size: 16px;
-            resize: none;
-            outline: none;
-            transition: all 0.3s ease;
-            box-sizing: border-box;
-            background: #090d13;
-            color: var(--text-bright);
-        }
-
-        textarea:focus {
-            border-color: var(--neon-blue);
-            box-shadow: 0 0 15px rgba(0, 210, 255, 0.2);
-            background: #0d1117;
-        }
-
-        button {
-            width: 100%;
-            background: linear-gradient(90deg, var(--neon-blue), var(--neon-purple));
-            color: white;
-            border: none;
-            padding: 16px;
-            border-radius: 16px;
-            font-family: 'Cairo', sans-serif;
-            font-size: 18px;
-            font-weight: bold;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            gap: 12px;
-            box-shadow: 0 4px 20px rgba(168, 85, 247, 0.2);
-            margin-top: 15px;
-        }
-
-        button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 25px rgba(0, 210, 255, 0.4);
-            filter: brightness(1.1);
-        }
-
-        .loading {
-            display: none;
-            margin: 25px 0;
-            color: var(--neon-blue);
-            font-weight: 600;
-            font-size: 15px;
-            text-align: center;
-        }
-
-        .loading i {
-            margin-left: 8px;
-            animation: spin 1s linear infinite;
-        }
-
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(-360deg); }
-        }
-
-        .response-card {
-            margin-top: 30px;
-            padding: 25px;
-            background: #1f242c;
-            border-radius: 16px;
-            color: #e6edf3;
-            line-height: 1.8;
-            display: none;
-            animation: slideUp 0.4s ease;
-            border-left: 4px solid var(--neon-purple);
-            border-right: 4px solid var(--neon-blue);
-            white-space: pre-wrap;
-            text-align: right;
-        }
-
-        @keyframes slideUp {
-            from { opacity: 0; transform: translateY(15px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        .footer {
-            margin-top: 35px;
-            text-align: center;
-            font-size: 13px;
-            color: #58a6ff;
-            font-weight: 600;
-        }
+        :root { --bg-dark: #0d1117; --card-dark: #161b22; --neon-blue: #00d2ff; --neon-purple: #a855f7; --text-light: #c9d1d9; --text-bright: #ffffff; --border-color: #30363d; }
+        body { font-family: 'Cairo', sans-serif; background-color: var(--bg-dark); background-image: radial-gradient(circle at 50% 50%, #161b33 0%, #0d1117 100%); margin: 0; padding: 0; display: flex; justify-content: center; align-items: center; min-height: 100vh; color: var(--text-light); }
+        .container { width: 90%; max-width: 700px; background: var(--card-dark); padding: 40px; border-radius: 24px; box-shadow: 0 20px 50px rgba(0, 210, 255, 0.05), 0 0 0 1px var(--border-color); position: relative; overflow: hidden; }
+        .container::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 4px; background: linear-gradient(90deg, var(--neon-blue), var(--neon-purple)); }
+        .header { text-align: center; margin-bottom: 35px; }
+        .header .logo-icon { font-size: 55px; background: linear-gradient(45deg, var(--neon-blue), var(--neon-purple)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 15px; filter: drop-shadow(0 0 10px rgba(0, 210, 255, 0.3)); }
+        .header h1 { color: var(--text-bright); margin: 0; font-size: 32px; font-weight: 800; }
+        .header p { color: #8b949e; font-size: 15px; margin-top: 8px; }
+        textarea { width: 100%; height: 130px; padding: 20px; border-radius: 16px; border: 2px solid var(--border-color); font-family: 'Cairo', sans-serif; font-size: 16px; resize: none; outline: none; box-sizing: border-box; background: #090d13; color: var(--text-bright); }
+        textarea:focus { border-color: var(--neon-blue); box-shadow: 0 0 15px rgba(0, 210, 255, 0.2); }
+        button { width: 100%; background: linear-gradient(90deg, var(--neon-blue), var(--neon-purple)); color: white; border: none; padding: 16px; border-radius: 16px; font-family: 'Cairo', sans-serif; font-size: 18px; font-weight: bold; cursor: pointer; display: flex; justify-content: center; align-items: center; gap: 12px; margin-top: 15px; }
+        button:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(0, 210, 255, 0.4); }
+        .loading { display: none; margin: 25px 0; color: var(--neon-blue); font-weight: 600; text-align: center; }
+        .response-card { margin-top: 30px; padding: 25px; background: #1f242c; border-radius: 16px; color: #e6edf3; line-height: 1.8; display: none; border-left: 4px solid var(--neon-purple); border-right: 4px solid var(--neon-blue); white-space: pre-wrap; text-align: right; }
+        .footer { margin-top: 35px; text-align: center; font-size: 13px; color: #58a6ff; }
+        .footer a { color: var(--neon-blue); text-decoration: none; margin-right: 10px; font-weight: bold; }
     </style>
 </head>
 <body>
-
 <div class="container">
     <div class="header">
         <i class="fas fa-brain logo-icon"></i>
         <h1>SYNAPSE</h1>
-        <p>بوابة التفكير العصبي الاصطناعي - يتم تسجيل المدخلات بأمان</p>
+        <p>بوابة التفكير العصبي الاصطناعي - متصل بـ Supabase Cloud</p>
     </div>
-
     <div class="input-group">
-        <textarea id="questionInput" placeholder="أدخل استعلامك أو فكرتك هنا المحفوظة رقمياً..."></textarea>
+        <textarea id="questionInput" placeholder="أدخل استعلامك هنا المحفوظ سحابياً للأبد..."></textarea>
     </div>
-
     <button onclick="askQuestion()">
         <span>إرسال النبضة العصبية</span>
         <i class="fas fa-bolt"></i>
     </button>
-    
-    <div id="loadingArea" class="loading">
-        <i class="fas fa-microchip"></i> جاري معالجة البيانات وتخزين الاستعلام...
-    </div>
-
+    <div id="loadingArea" class="loading"><i class="fas fa-spinner fa-spin"></i> جاري معالجة البيانات وتخزين الاستعلام...</div>
     <div id="responseCard" class="response-card"></div>
-
     <div class="footer">
-        <i class="fas fa-database"></i> متصل بنجاح بقاعدة البيانات المحفوظة ومؤمنة بالكامل
+        <i class="fas fa-cloud"></i> متصل بقاعدة بيانات سحابية آمنة | <a href="/logs" target="_blank">عرض السجلات <i class="fas fa-external-link-alt"></i></a>
     </div>
 </div>
-
 <script>
 async function askQuestion() {
     const input = document.getElementById('questionInput');
     const responseCard = document.getElementById('responseCard');
     const loadingArea = document.getElementById('loadingArea');
-    
-    if (!input.value.trim()) {
-        alert('من فضلك أدخل استعلامك أولاً!');
-        return;
-    }
-    
-    loadingArea.style.display = 'block';
-    responseCard.style.display = 'none';
-    
+    if (!input.value.trim()) { alert('من فضلك أدخل استعلامك أولاً!'); return; }
+    loadingArea.style.display = 'block'; responseCard.style.display = 'none';
     try {
-        const res = await fetch('/ask', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ question: input.value })
-        });
-        
+        const res = await fetch('/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: input.value }) });
         const data = await res.json();
-        
-        if (data.answer) {
-            responseCard.innerText = data.answer;
-            responseCard.style.display = 'block';
-        } else {
-            responseCard.innerText = "خطأ في النظام: " + data.error;
-            responseCard.style.display = 'block';
-        }
-    } catch (e) {
-        responseCard.innerText = "فشل في الاتصال بالخادم المركزي.";
-        responseCard.style.display = 'block';
-    } finally {
-        loadingArea.style.display = 'none';
-    }
+        if (data.answer) { responseCard.innerText = data.answer; responseCard.style.display = 'block'; }
+        else { responseCard.innerText = "خطأ: " + data.error; responseCard.style.display = 'block'; }
+    } catch (e) { responseCard.innerText = "فشل في الاتصال بالخادم."; responseCard.style.display = 'block'; }
+    finally { loadingArea.style.display = 'none'; }
 }
 </script>
+</body>
+</html>
+"""
 
+LOGS_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <title>سجل Supabase - Synapse</title>
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        body { font-family: 'Cairo', sans-serif; background-color: #0d1117; color: #c9d1d9; padding: 30px; }
+        .table-container { max-width: 1000px; margin: 0 auto; background: #161b22; padding: 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); border: 1px solid #30363d; }
+        h2 { color: #fff; border-bottom: 2px solid #30363d; padding-bottom: 15px; display: flex; justify-content: space-between; align-items: center; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { padding: 15px; text-align: right; border-bottom: 1px solid #30363d; }
+        th { background-color: #21262d; color: #00d2ff; }
+        tr:hover { background-color: #1f242c; }
+        .btn-delete { background: #f85149; color: white; border: none; padding: 8px 15px; border-radius: 6px; cursor: pointer; font-family: 'Cairo'; }
+        .empty { text-align: center; padding: 30px; color: #8b949e; }
+    </style>
+</head>
+<body>
+<div class="table-container">
+    <h2>
+        <span><i class="fas fa-cloud-upload-alt"></i> سجل السحابة الدائم (Supabase)</span>
+        <form action="/clear-logs" method="POST" style="margin:0;" onsubmit="return confirm('هل أنت متأكد من مسح الجدول سحابياً؟');">
+            <button type="submit" class="btn-delete"><i class="fas fa-trash"></i> تصفير الداتابيز</button>
+        </form>
+    </h2>
+    <table>
+        <thead>
+            <tr>
+                <th style="width: 5%;">ID</th>
+                <th style="width: 35%;">السؤال</th>
+                <th style="width: 45%;">إجابة الـ AI</th>
+                <th style="width: 15%;">التاريخ والوقت</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in rows %}
+            <tr>
+                <td>{{ row[0] }}</td>
+                <td style="white-space: pre-wrap;">{{ row[1] }}</td>
+                <td style="white-space: pre-wrap;">{{ row[2] }}</td>
+                <td>{{ row[3] }}</td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="4" class="empty">لا توجد سجلات مخزنة حتى الآن.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
 </body>
 </html>
 """
@@ -302,14 +175,12 @@ def ask():
     user_question = data.get("question", "")
     if not user_question:
         return jsonify({"error": "الاستعلام فارغ"}), 400
-
     try:
-        # استدعاء الموديل الأحدث المستقر كلياً
         model = genai.GenerativeModel("gemini-2.5-flash")
         response = model.generate_content(user_question)
         ai_response = response.text
 
-        # استدعاء دالة الحفظ المدمجة لـ Vercel
+        # الحفظ السحابي
         save_interaction(user_question, ai_response)
 
         return jsonify({"answer": ai_response})
@@ -317,11 +188,36 @@ def ask():
         return jsonify({"error": str(e)}), 500
 
 
-if __name__ == "__main__":
-    # محلياً فقط للإحتياط، أما على سيرفر فيرسال فسيتم الإنشاء الفوري أوتوماتيكياً
+@app.route("/logs")
+def show_logs():
+    rows = []
     try:
-        with sqlite3.connect("/tmp/database.db") as conn:
-            pass
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, user_question, ai_response, created_at FROM conversations ORDER BY id DESC"
+        )
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        print(e)
+    return render_template_string(LOGS_TEMPLATE, rows=rows)
+
+
+@app.route("/clear-logs", methods=["POST"])
+def clear_logs():
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("TRUNCATE TABLE conversations RESTART IDENTITY;")
+        conn.commit()
+        cursor.close()
+        conn.close()
     except:
         pass
+    return "<script>alert('تم تصفير الداتابيز سحابياً بنجاح'); window.location.href='/logs';</script>"
+
+
+if __name__ == "__main__":
     app.run(debug=True, port=5000)
