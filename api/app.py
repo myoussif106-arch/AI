@@ -1,42 +1,52 @@
 import os
-from datetime import datetime
 from flask import Flask, jsonify, render_template_string, request
 import google.generativeai as genai
-import psycopg2  # المكتبة المسؤولة عن الاتصال بـ PostgreSQL
+import psycopg2
+
 app = Flask(__name__)
 
-# 1. إعداد مفتاح جيمني من البيئة
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-genai.configure(api_key=GEMINI_API_KEY)
+# 1. تجميع كل مفاتيح جيمني المتاحة من الـ Environment Variables (لتفادي الـ Limit)
+API_KEYS = [
+    os.environ.get("GEMINI_KEY_1"),
+    os.environ.get("GEMINI_KEY_2"),
+    os.environ.get("GEMINI_KEY_3"),
+    os.environ.get("GEMINI_API_KEY") # المفتاح الاحتياطي القديم لو موجود
+]
+# فلترة القائمة لحذف أي مفتاح فارغ أو غير مضاف
+API_KEYS = [key for key in API_KEYS if key]
 
-# 2. الحصول على رابط قاعدة بيانات Supabase من البيئة
+# رابط قاعدة بيانات Supabase
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
-
-# دالة الاتصال الآمن بـ Supabase
 def get_db_connection():
-    # يتصل بالسيرفر السحابي مباشرة باستخدام الـ URI
     return psycopg2.connect(DATABASE_URL)
 
-
-# 3. دالة حفظ البيانات في Supabase
 def save_interaction(question, response):
+    conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        # هنا الـ SQL مخصص لـ PostgreSQL
+        
+        # تنفيذ أمر الإدخال في جدولconversations
         cursor.execute(
             "INSERT INTO conversations (user_question, ai_response) VALUES (%s, %s)",
-            (question, response),
+            (question, response)
         )
+        
+        # السطر السحري: تثبيت حفظ البيانات في PostgreSQL سحابياً فوراً قبل قفل الاتصال
         conn.commit()
+        
         cursor.close()
-        conn.close()
+        print("Data saved to Supabase successfully!")
     except Exception as e:
         print(f"Database Error: {e}")
+        if conn:
+            conn.rollback()  # إلغاء العملية لو حصل خطأ لعدم تعليق الداتابيز
+    finally:
+        if conn:
+            conn.close()
 
-
-# 4. واجهات العرض (نفس ثيم Synapse الاحترافي الغامق)
+# واجهة المستخدم (ثيم Synapse Dark المطور)
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -73,13 +83,13 @@ HTML_TEMPLATE = """
         <p>بوابة التفكير العصبي الاصطناعي - متصل بـ Supabase Cloud</p>
     </div>
     <div class="input-group">
-        <textarea id="questionInput" placeholder="أدخل استعلامك هنا المحفوظ سحابياً للأبد..."></textarea>
+        <textarea id="questionInput" placeholder="أدخل استعلامك هنا وسيقوم النظام بالمعالجة اللامتناهية..."></textarea>
     </div>
     <button onclick="askQuestion()">
         <span>إرسال النبضة العصبية</span>
         <i class="fas fa-bolt"></i>
     </button>
-    <div id="loadingArea" class="loading"><i class="fas fa-spinner fa-spin"></i> جاري معالجة البيانات وتخزين الاستعلام...</div>
+    <div id="loadingArea" class="loading"><i class="fas fa-spinner fa-spin"></i> جاري معالجة البيانات وتخزين الاستعلام سحابياً...</div>
     <div id="responseCard" class="response-card"></div>
     <div class="footer">
         <i class="fas fa-cloud"></i> متصل بقاعدة بيانات سحابية آمنة | <a href="/logs" target="_blank">عرض السجلات <i class="fas fa-external-link-alt"></i></a>
@@ -105,6 +115,7 @@ async function askQuestion() {
 </html>
 """
 
+# قالب السجلات (المتصل بـ Supabase مباشرة)
 LOGS_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -162,11 +173,9 @@ LOGS_TEMPLATE = """
 </html>
 """
 
-
 @app.route("/")
 def home():
     return render_template_string(HTML_TEMPLATE)
-
 
 @app.route("/ask", methods=["POST"])
 def ask():
@@ -174,18 +183,28 @@ def ask():
     user_question = data.get("question", "")
     if not user_question:
         return jsonify({"error": "الاستعلام فارغ"}), 400
-    try:
-        model = genai.GenerativeModel("gemini-2.5-flash")
-        response = model.generate_content(user_question)
-        ai_response = response.text
 
-        # الحفظ السحابي
-        save_interaction(user_question, ai_response)
-
-        return jsonify({"answer": ai_response})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
+    last_error = "لم يتم تهيئة أي مفاتيح API في إعدادات فيرسال."
+    
+    # محاولة توليد الإجابة باللف على المفاتيح المتاحة بالتناوب لتجنب الـ 429
+    for current_key in API_KEYS:
+        try:
+            genai.configure(api_key=current_key)
+            model = genai.GenerativeModel("gemini-2.5-flash")
+            response = model.generate_content(user_question)
+            ai_response = response.text
+            
+            # لو نجح التوليد، احفظ فوراً في Supabase
+            save_interaction(user_question, ai_response)
+            return jsonify({"answer": ai_response})
+            
+        except Exception as e:
+            last_error = str(e)
+            print(f"Key failed, switching to next. Error: {e}")
+            continue
+            
+    # لو كل المفاتيح المتاحة جابت ليميت في نفس الوقت
+    return jsonify({"error": f"جميع المفاتيح استهلكت حدها الأقصى حالياً. تفاصيل آخر خطأ: {last_error}"}), 500
 
 @app.route("/logs")
 def show_logs():
@@ -193,16 +212,13 @@ def show_logs():
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute(
-            "SELECT id, user_question, ai_response, created_at FROM conversations ORDER BY id DESC"
-        )
+        cursor.execute("SELECT id, user_question, ai_response, created_at FROM conversations ORDER BY id DESC")
         rows = cursor.fetchall()
         cursor.close()
         conn.close()
     except Exception as e:
         print(e)
     return render_template_string(LOGS_TEMPLATE, rows=rows)
-
 
 @app.route("/clear-logs", methods=["POST"])
 def clear_logs():
@@ -216,7 +232,6 @@ def clear_logs():
     except:
         pass
     return "<script>alert('تم تصفير الداتابيز سحابياً بنجاح'); window.location.href='/logs';</script>"
-
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
