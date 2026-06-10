@@ -6,15 +6,18 @@ import google.generativeai as genai
 
 app = Flask(__name__)
 
-# بدلاً من كتابة المفتاح صراحة، بنخليه يقراه من سيرفر الاستضافة أوتوماتيك
+# 1. إعداد مفتاح جيمني - يقرأ تلقائياً من الـ Environment Variables في فيرسال بأمان
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
 
 
-# 2. إعداد قاعدة البيانات والجدول بأمان
-def init_db():
-    with sqlite3.connect("database.db") as conn:
+# 2. الدالة المضمونة لإنشاء الجدول وحفظ البيانات فوراً في بيئة الـ Serverless
+def save_interaction(question, response):
+    # استخدام المسار /tmp/ المسموح بالكتابة عليه جوه سيرفرات Vercel
+    with sqlite3.connect("/tmp/database.db") as conn:
         cursor = conn.cursor()
+
+        # نضمن أولاً إن الجدول موجود في كل مرة بيتبعت فيها سؤال
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS conversations (
@@ -25,13 +28,8 @@ def init_db():
             )
         """
         )
-        conn.commit()
 
-
-# 3. دالة حفظ البيانات الفورية في قاعدة البيانات
-def save_interaction(question, response):
-   with sqlite3.connect("/tmp/database.db") as conn:
-        cursor = conn.cursor()
+        # إدخال البيانات وحفظها فوراً
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         cursor.execute(
             "INSERT INTO conversations (user_question, ai_response, created_at) VALUES (?, ?, ?)",
@@ -40,7 +38,7 @@ def save_interaction(question, response):
         conn.commit()
 
 
-# 4. واجهة واجهة المستخدم الاحترافية الثيم الغامق (Synapse Dark Tech)
+# 3. واجهة المستخدم الاحترافية الثيم الغامق (Synapse Dark Tech)
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -86,7 +84,6 @@ HTML_TEMPLATE = """
             overflow: hidden;
         }
 
-        /* خط إضاءة نيون علوي جمالي */
         .container::before {
             content: '';
             position: absolute;
@@ -123,10 +120,6 @@ HTML_TEMPLATE = """
             color: #8b949e;
             font-size: 15px;
             margin-top: 8px;
-        }
-
-        .input-group {
-            margin-bottom: 25px;
         }
 
         textarea {
@@ -168,16 +161,13 @@ HTML_TEMPLATE = """
             align-items: center;
             gap: 12px;
             box-shadow: 0 4px 20px rgba(168, 85, 247, 0.2);
+            margin-top: 15px;
         }
 
         button:hover {
             transform: translateY(-2px);
             box-shadow: 0 8px 25px rgba(0, 210, 255, 0.4);
             filter: brightness(1.1);
-        }
-
-        button:active {
-            transform: translateY(0);
         }
 
         .loading {
@@ -212,7 +202,6 @@ HTML_TEMPLATE = """
             border-right: 4px solid var(--neon-blue);
             white-space: pre-wrap;
             text-align: right;
-            box-shadow: inset 0 2px 4px rgba(0,0,0,0.2);
         }
 
         @keyframes slideUp {
@@ -315,12 +304,12 @@ def ask():
         return jsonify({"error": "الاستعلام فارغ"}), 400
 
     try:
-        # استخدام الموديل الأحدث المتوافق والمستقر كلياً
+        # استدعاء الموديل الأحدث المستقر كلياً
         model = genai.GenerativeModel("gemini-2.5-flash")
         response = model.generate_content(user_question)
         ai_response = response.text
 
-        # الحفظ الآمن الفوري في SQLite
+        # استدعاء دالة الحفظ المدمجة لـ Vercel
         save_interaction(user_question, ai_response)
 
         return jsonify({"answer": ai_response})
@@ -329,5 +318,10 @@ def ask():
 
 
 if __name__ == "__main__":
-    init_db()
+    # محلياً فقط للإحتياط، أما على سيرفر فيرسال فسيتم الإنشاء الفوري أوتوماتيكياً
+    try:
+        with sqlite3.connect("/tmp/database.db") as conn:
+            pass
+    except:
+        pass
     app.run(debug=True, port=5000)
