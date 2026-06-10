@@ -5,46 +5,32 @@ import psycopg2
 
 app = Flask(__name__)
 
-# 1. تجميع كل مفاتيح جيمني المتاحة من الـ Environment Variables (لتفادي الـ Limit)
+# تجميع كل الاحتمالات لأسماء المفاتيح عشان نضمن إنه لقط أي مفتاح ضفته في فيرسال
 API_KEYS = [
     os.environ.get("GEMINI_KEY_1"),
     os.environ.get("GEMINI_KEY_2"),
     os.environ.get("GEMINI_KEY_3"),
-    os.environ.get("GEMINI_API_KEY") # المفتاح الاحتياطي القديم لو موجود
+    os.environ.get("GEMINI_API_KEY")
 ]
-# فلترة القائمة لحذف أي مفتاح فارغ أو غير مضاف
 API_KEYS = [key for key in API_KEYS if key]
 
-# رابط قاعدة بيانات Supabase
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 def get_db_connection():
-    return psycopg2.connect(DATABASE_URL)
+    conn = psycopg2.connect(DATABASE_URL)
+    conn.autocommit = True  # إجبار قاعدة البيانات على حفظ أي Insert فوراً بدون انتظار
+    return conn
 
 def save_interaction(question, response):
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        # تنفيذ أمر الإدخال في جدولconversations
-        cursor.execute(
-            "INSERT INTO conversations (user_question, ai_response) VALUES (%s, %s)",
-            (question, response)
-        )
-        
-        # السطر السحري: تثبيت حفظ البيانات في PostgreSQL سحابياً فوراً قبل قفل الاتصال
-        conn.commit()
-        
-        cursor.close()
-        print("Data saved to Supabase successfully!")
-    except Exception as e:
-        print(f"Database Error: {e}")
-        if conn:
-            conn.rollback()  # إلغاء العملية لو حصل خطأ لعدم تعليق الداتابيز
-    finally:
-        if conn:
-            conn.close()
+    # السطر ده هيرمي خطأ صريح للكود الرئيسي لو الحفظ فشل عشان ميسكتش
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO conversations (user_question, ai_response) VALUES (%s, %s)",
+        (question, response)
+    )
+    cursor.close()
+    conn.close()
 
 # واجهة المستخدم (ثيم Synapse Dark المطور)
 HTML_TEMPLATE = """
@@ -115,7 +101,6 @@ async function askQuestion() {
 </html>
 """
 
-# قالب السجلات (المتصل بـ Supabase مباشرة)
 LOGS_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -184,9 +169,10 @@ def ask():
     if not user_question:
         return jsonify({"error": "الاستعلام فارغ"}), 400
 
-    last_error = "لم يتم تهيئة أي مفاتيح API في إعدادات فيرسال."
-    
-    # محاولة توليد الإجابة باللف على المفاتيح المتاحة بالتناوب لتجنب الـ 429
+    if not API_KEYS:
+        return jsonify({"error": "فيرسال مش قاري أي مفتاح جيمني خالص. تأكد من أسامي الـ Keys"}), 500
+
+    last_error = ""
     for current_key in API_KEYS:
         try:
             genai.configure(api_key=current_key)
@@ -194,17 +180,20 @@ def ask():
             response = model.generate_content(user_question)
             ai_response = response.text
             
-            # لو نجح التوليد، احفظ فوراً في Supabase
-            save_interaction(user_question, ai_response)
+            # محاولة الحفظ الصريحة
+            try:
+                save_interaction(user_question, ai_response)
+            except Exception as db_err:
+                # لو فشل الحفظ، ارمي الخطأ للمستخدم علطول عشان نقفشه
+                return jsonify({"error": f"جيمني رد بس الداتابيز رفضت تحفظ! السبب: {db_err}"}), 500
+                
             return jsonify({"answer": ai_response})
             
         except Exception as e:
             last_error = str(e)
-            print(f"Key failed, switching to next. Error: {e}")
             continue
             
-    # لو كل المفاتيح المتاحة جابت ليميت في نفس الوقت
-    return jsonify({"error": f"جميع المفاتيح استهلكت حدها الأقصى حالياً. تفاصيل آخر خطأ: {last_error}"}), 500
+    return jsonify({"error": f"مشكلة في المفاتيح أو الليميت: {last_error}"}), 500
 
 @app.route("/logs")
 def show_logs():
@@ -217,7 +206,7 @@ def show_logs():
         cursor.close()
         conn.close()
     except Exception as e:
-        print(e)
+        return f"خطأ أثناء جلب السجلات: {e}"
     return render_template_string(LOGS_TEMPLATE, rows=rows)
 
 @app.route("/clear-logs", methods=["POST"])
@@ -226,11 +215,10 @@ def clear_logs():
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("TRUNCATE TABLE conversations RESTART IDENTITY;")
-        conn.commit()
         cursor.close()
         conn.close()
-    except:
-        pass
+    except Exception as e:
+        return f"فشل التصفير: {e}"
     return "<script>alert('تم تصفير الداتابيز سحابياً بنجاح'); window.location.href='/logs';</script>"
 
 if __name__ == "__main__":
