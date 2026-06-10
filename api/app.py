@@ -30,7 +30,7 @@ def init_db():
 
 # 3. دالة حفظ البيانات الفورية في قاعدة البيانات
 def save_interaction(question, response):
-    with sqlite3.connect("database.db") as conn:
+   with sqlite3.connect("/tmp/database.db") as conn:
         cursor = conn.cursor()
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         cursor.execute(
