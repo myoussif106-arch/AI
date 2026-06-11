@@ -1,4 +1,5 @@
 import os
+import base64
 from flask import Flask, jsonify, render_template_string, request, redirect, session
 import google.generativeai as genai
 import psycopg2
@@ -33,7 +34,6 @@ def save_interaction(question, response):
         cursor.close()
         conn.close()
     except Exception as e:
-        # خطأ الداتابيز صامت تماماً ولا يظهر للمستخدم نهائياً
         print(f"Silent DB Error: {e}")
 
 def get_feedback_counts():
@@ -113,11 +113,22 @@ HTML_TEMPLATE = """
         .header .logo-icon { font-size: 55px; background: linear-gradient(45deg, var(--neon-blue), var(--neon-purple)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 15px; }
         .header h1 { color: var(--text-bright); margin: 0; font-size: 32px; font-weight: 800; }
         .logout-btn { position: absolute; top: 0; left: 0; color: #ff7b72; text-decoration: none; font-size: 14px; border: 1px solid #30363d; padding: 5px 12px; border-radius: 8px; background: #090d13; }
-        textarea { width: 100%; height: 130px; padding: 20px; border-radius: 16px; border: 2px solid var(--border-color); font-family: 'Cairo'; font-size: 16px; resize: none; outline: none; box-sizing: border-box; background: #090d13; color: var(--text-bright); }
-        textarea:focus { border-color: var(--neon-blue); }
-        button.btn-main { width: 100%; background: linear-gradient(90deg, var(--neon-blue), var(--neon-purple)); color: white; border: none; padding: 16px; border-radius: 16px; font-weight: bold; cursor: pointer; display: flex; justify-content: center; align-items: center; gap: 12px; margin-top: 15px; font-family: 'Cairo'; font-size: 18px; }
+        
+        .input-wrapper { background: #090d13; border: 2px solid var(--border-color); border-radius: 16px; padding: 10px; margin-bottom: 15px; }
+        .input-wrapper:focus-within { border-color: var(--neon-blue); }
+        textarea { width: 100%; height: 110px; border: none; font-family: 'Cairo'; font-size: 16px; resize: none; outline: none; box-sizing: border-box; background: transparent; color: var(--text-bright); padding: 10px; }
+        
+        /* شريط أدوات رفع الملفات */
+        .tools-bar { display: flex; justify-content: space-between; align-items: center; padding: 5px 10px; border-top: 1px solid var(--border-color); margin-top: 5px; }
+        .file-upload-btn { color: var(--neon-blue); cursor: pointer; font-size: 14px; display: flex; align-items: center; gap: 6px; background: #161b22; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border-color); transition: all 0.3s; }
+        .file-upload-btn:hover { background: #21262d; box-shadow: 0 0 8px rgba(0, 210, 255, 0.3); }
+        #fileInfo { font-size: 12px; color: #8b949e; }
+        
+        button.btn-main { width: 100%; background: linear-gradient(90deg, var(--neon-blue), var(--neon-purple)); color: white; border: none; padding: 16px; border-radius: 16px; font-weight: bold; cursor: pointer; display: flex; justify-content: center; align-items: center; gap: 12px; font-family: 'Cairo'; font-size: 18px; }
         .loading { display: none; margin: 25px 0; color: var(--neon-blue); text-align: center; font-weight:600; }
         .response-card { margin-top: 30px; padding: 25px; background: #1f242c; border-radius: 16px; display: none; border-left: 4px solid var(--neon-purple); border-right: 4px solid var(--neon-blue); white-space: pre-wrap; text-align: right; }
+        .response-card img { max-width: 100%; border-radius: 12px; margin-top: 15px; border: 2px solid var(--border-color); }
+        
         .status-msg { background: #21262d; padding: 15px; border-radius: 12px; text-align: center; border: 1px solid #30363d; color: #e6edf3; }
         .feedback-section { margin-top: 40px; display: flex; flex-direction: column; align-items: center; gap: 12px; padding-top: 25px; border-top: 1px solid var(--border-color); }
         .feedback-buttons { display: flex; gap: 20px; }
@@ -147,17 +158,26 @@ HTML_TEMPLATE = """
         <p>عذراً، تم رفض طلب انضمام هذا الحساب للمنظومة.</p>
     </div>
     {% else %}
-    <div class="input-group">
-        <textarea id="questionInput" placeholder="أدخل استعلامك هنا وسيقوم النظام بالمعالجة اللامتناهية..."></textarea>
+    
+    <div class="input-wrapper">
+        <textarea id="questionInput" placeholder="اكتب سؤالك، أو ارفع ملف واطلب شرحه، أو اكتب 'ارسم كذا' لتوليد صورة..."></textarea>
+        <div class="tools-bar">
+            <label class="file-upload-btn" for="fileInput">
+                <i class="fas fa-paperclip"></i> رفع صورة / PDF
+            </label>
+            <input type="file" id="fileInput" accept="image/*, application/pdf" style="display: none;" onchange="handleFileSelect()">
+            <span id="fileInfo">لم يتم اختيار ملف</span>
+        </div>
     </div>
+    
     <button class="btn-main" onclick="askQuestion()">
         <span>إرسال النبضة العصبية</span> <i class="fas fa-bolt"></i>
     </button>
-    <div id="loadingArea" class="loading"><i class="fas fa-spinner fa-spin"></i> جاري توليد الاستجابة...</div>
+    <div id="loadingArea" class="loading"><i class="fas fa-spinner fa-spin"></i> جاري توليد المعالجة العصبية...</div>
     <div id="responseCard" class="response-card"></div>
     
     <div class="feedback-section">
-        <div id="feedbackTitle" style="font-size: 14px; color: #8b949e;">ما هو تقييمك للمنصة?</div>
+        <div id="feedbackTitle" style="font-size: 14px; color: #8b949e;">ما هو تقييمك للمنصة؟</div>
         <div class="feedback-buttons">
             <button class="feedback-btn" id="likeBtn" onclick="sendFeedback('like')">
                 <i class="far fa-thumbs-up"></i> أعجبني <span class="count" id="likeCount">{{ likes }}</span>
@@ -170,28 +190,85 @@ HTML_TEMPLATE = """
     {% endif %}
 </div>
 <script>
+let selectedFileBase64 = "";
+let selectedFileType = "";
+
 document.addEventListener("DOMContentLoaded", () => {
     const hasVoted = localStorage.getItem("synapse_voted");
     if (hasVoted && document.getElementById('likeBtn')) { disableFeedbackButtons(hasVoted); }
 });
+
+function handleFileSelect() {
+    const fileInput = document.getElementById('fileInput');
+    const fileInfo = document.getElementById('fileInfo');
+    if (!fileInput.files.length) return;
+    
+    const file = fileInput.files[0];
+    fileInfo.innerText = file.name + " (" + (file.size/1024/1024).toFixed(2) + " MB)";
+    selectedFileType = file.type;
+    
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        selectedFileBase64 = e.target.result.split(',')[1];
+    };
+    reader.readAsDataURL(file);
+}
+
 function disableFeedbackButtons(votedType) {
     const likeBtn = document.getElementById('likeBtn'); const dislikeBtn = document.getElementById('dislikeBtn');
     likeBtn.disabled = true; dislikeBtn.disabled = true;
     document.getElementById('feedbackTitle').innerText = "شكراً لتقييمك المنصة!";
     if (votedType === 'like') { likeBtn.classList.add('voted'); } else { dislikeBtn.classList.add('voted'); }
 }
+
 async function askQuestion() {
-    const input = document.getElementById('questionInput'); const responseCard = document.getElementById('responseCard'); const loadingArea = document.getElementById('loadingArea');
-    if (!input.value.trim()) { alert('من فضلك أدخل استعلامك أولاً!'); return; }
+    const input = document.getElementById('questionInput'); 
+    const responseCard = document.getElementById('responseCard'); 
+    const loadingArea = document.getElementById('loadingArea');
+    
+    if (!input.value.trim() && !selectedFileBase64) { alert('من فضلك أدخل استعلامك أو ارفع ملفاً أولاً!'); return; }
+    
     loadingArea.style.display = 'block'; responseCard.style.display = 'none';
+    
     try {
-        const res = await fetch('/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: input.value }) });
+        const payload = { 
+            question: input.value,
+            fileData: selectedFileBase64,
+            fileType: selectedFileType
+        };
+        
+        const res = await fetch('/ask', { 
+            method: 'POST', 
+            headers: { 'Content-Type': 'application/json' }, 
+            body: JSON.stringify(payload) 
+        });
         const data = await res.json();
-        if (data.answer) { responseCard.innerText = data.answer; responseCard.style.display = 'block'; }
-        else { responseCard.innerText = "عذراً: " + data.error; responseCard.style.display = 'block'; }
-    } catch (e) { responseCard.innerText = "فشل في الاتصال بالخادم."; responseCard.style.display = 'block'; }
-    finally { loadingArea.style.display = 'none'; }
+        
+        if (data.image) {
+            responseCard.innerHTML = (data.text ? "<p>"+data.text+"</p>" : "") + `<img src="data:image/png;base64,${data.image}" />`;
+            responseCard.style.display = 'block';
+        } else if (data.answer) { 
+            responseCard.innerText = data.answer; 
+            responseCard.style.display = 'block'; 
+        } else { 
+            responseCard.innerText = "عذراً: " + data.error; 
+            responseCard.style.display = 'block'; 
+        }
+        
+        // تصفير خانة الملفات بعد النجاح
+        selectedFileBase64 = "";
+        selectedFileType = "";
+        document.getElementById('fileInput').value = "";
+        document.getElementById('fileInfo').innerText = "لم يتم اختيار ملف";
+        
+    } catch (e) { 
+        responseCard.innerText = "فشل في الاتصال بالخادم العصبي."; 
+        responseCard.style.display = 'block'; 
+    } finally { 
+        loadingArea.style.display = 'none'; 
+    }
 }
+
 async function sendFeedback(type) {
     if (localStorage.getItem("synapse_voted")) return;
     try {
@@ -274,13 +351,12 @@ ADMIN_TEMPLATE = """
 </html>
 """
 
-# --- مزارات الـ Routes والتحكم بـ الـ Sessions ---
+# --- مسارات التطبيق المحدثة ---
 
 @app.route("/")
 def home():
     if "user" not in session:
         return redirect("/login")
-    
     likes, dislikes = get_feedback_counts()
     return render_template_string(HTML_TEMPLATE, user=session["user"], status=session["status"], likes=likes, dislikes=dislikes)
 
@@ -289,7 +365,6 @@ def login():
     if request.method == "POST":
         username = request.form.get("username", "").strip().lower()
         password = request.form.get("password", "").strip()
-        
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
@@ -297,7 +372,6 @@ def login():
             user_row = cursor.fetchone()
             cursor.close()
             conn.close()
-            
             if user_row and user_row[2] == password:
                 session["user"] = user_row[1]
                 session["status"] = user_row[3]
@@ -306,7 +380,6 @@ def login():
                 return render_template_string(AUTH_TEMPLATE, mode="login", msg="خطأ في اسم المستخدم أو كلمة المرور.")
         except Exception as e:
             return render_template_string(AUTH_TEMPLATE, mode="login", msg="حدث خطأ أثناء الاتصال بالخادم الداخلي.")
-            
     return render_template_string(AUTH_TEMPLATE, mode="login")
 
 @app.route("/register", methods=["GET", "POST"])
@@ -314,20 +387,16 @@ def register():
     if request.method == "POST":
         username = request.form.get("username", "").strip().lower()
         password = request.form.get("password", "").strip()
-        
         if len(username) < 3 or len(password) < 4:
             return render_template_string(AUTH_TEMPLATE, mode="register", msg="البيانات المدخلة قصيرة جداً.")
-            
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
-            # السطر السحري المحدث: كلمة مرور المدير معقدة جداً لمنع تحذير الاختراق التلقائي من المتصفحات
             cursor.execute("""
                 INSERT INTO site_users (username, password, status) 
                 VALUES ('admin', 'Synapse_Admin_2026!#', 'approved')
                 ON CONFLICT (username) DO NOTHING;
             """)
-            
             cursor.execute("INSERT INTO site_users (username, password, status) VALUES (%s, %s, 'pending')", (username, password))
             cursor.close()
             conn.close()
@@ -336,7 +405,6 @@ def register():
             return render_template_string(AUTH_TEMPLATE, mode="register", msg="اسم المستخدم هذا محجوز مسبقاً.")
         except Exception as e:
             return render_template_string(AUTH_TEMPLATE, mode="register", msg="حدث خطأ في معالجة طلب التسجيل.")
-            
     return render_template_string(AUTH_TEMPLATE, mode="register")
 
 @app.route("/logout")
@@ -350,25 +418,64 @@ def ask():
         return jsonify({"error": "غير مصرح لك بالاستخدام حالياً."}), 403
 
     data = request.get_json()
-    user_question = data.get("question", "")
-    if not user_question:
+    user_question = data.get("question", "").strip()
+    file_data = data.get("fileData", "")
+    file_type = data.get("fileType", "")
+
+    if not user_question and not file_data:
         return jsonify({"error": "الاستعلام فارغ"}), 400
+
+    # فحص ذكي: هل المستخدم يطلب إنشاء صورة؟
+    is_drawing_request = any(user_question.startswith(p) for p in ["ارسم", "انشئ صورة ل", "صورة ل", "draw", "create image"])
 
     last_error = ""
     for current_key in API_KEYS:
         try:
             genai.configure(api_key=current_key)
-            model = genai.GenerativeModel("gemini-2.5-flash")
-            response = model.generate_content(user_question)
-            ai_response = response.text
-            
-            save_interaction(user_question, ai_response)
-            return jsonify({"answer": ai_response})
+
+            # حالة 1: طلب توليد صورة باستخدام نموذج Imagen
+            if is_drawing_request:
+                # تنظيف النص للحصول على الـ Prompt الصافي
+                prompt = user_question
+                for p in ["ارسم", "انشئ صورة ل", "صورة ل", "draw", "create image"]:
+                    prompt = prompt.replace(p, "").strip()
+                
+                # استدعاء نموذج الصور من جوجل
+                imagen_model = genai.GenerativeModel("imagen-3.0-generate-002")
+                result = imagen_model.generate_images(prompt=prompt, number_of_images=1)
+                
+                # تحويل الصورة المستلمة لـ Base64 لإرسالها للواجهة مباشرة
+                for img in result.images:
+                    encoded_img = base64.b64encode(img.image_bytes).decode('utf-8')
+                    save_interaction(user_question, f"[توليد صورة بنجاح لـ: {prompt}]")
+                    return jsonify({"image": encoded_img, "text": f"تم معالجة النبضة العصبية البصرية لـ: {prompt}"})
+
+            # حالة 2: محادثة عادية أو تحليل ملفات (صورة / PDF)
+            else:
+                model = genai.GenerativeModel("gemini-2.5-flash")
+                contents = []
+
+                # تجهيز الملف المرفوع لو وجد صامتاً في الذاكرة
+                if file_data and file_type:
+                    contents.append({
+                        'mime_type': file_type,
+                        'data': base64.b64decode(file_data)
+                    })
+                
+                if user_question:
+                    contents.append(user_question)
+
+                response = model.generate_content(contents)
+                ai_response = response.text
+                
+                save_interaction(user_question, ai_response)
+                return jsonify({"answer": ai_response})
+
         except Exception as e:
             last_error = str(e)
             continue
             
-    return jsonify({"error": "الخادم مضغوط حالياً، يرجى إعادة إرسال النبضة بعد ثوانٍ."}), 500
+    return jsonify({"error": f"الخادم واجه ضغطاً أثناء المعالجة العصبية. تفاصيل: {last_error}"}), 500
 
 @app.route("/feedback", methods=["POST"])
 def feedback():
@@ -388,13 +495,10 @@ def feedback():
             pass
     return jsonify({"status": "ignored"}), 400
 
-# --- مسارات المدير (Admin Area السرية) ---
-
 @app.route("/logs")
 def show_logs():
     if "user" not in session or session["user"] != "admin":
         return redirect("/login")
-        
     users_list = []
     try:
         conn = get_db_connection()
@@ -405,14 +509,12 @@ def show_logs():
         conn.close()
     except Exception as e:
         return f"Error: {e}"
-        
     return render_template_string(ADMIN_TEMPLATE, users=users_list)
 
 @app.route("/admin/action/<int:user_id>/<string:new_status>")
 def admin_action(user_id, new_status):
     if "user" not in session or session["user"] != "admin":
         return redirect("/login")
-        
     if new_status in ['approved', 'rejected']:
         try:
             conn = get_db_connection()
@@ -422,7 +524,6 @@ def admin_action(user_id, new_status):
             conn.close()
         except:
             pass
-            
     return redirect("/logs")
 
 if __name__ == "__main__":
