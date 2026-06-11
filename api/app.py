@@ -9,17 +9,6 @@ app.secret_key = os.environ.get("FLASK_SECRET_KEY", "synapse_secret_9988")
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
-def get_all_api_keys():
-    """
-    الدالة السحرية المحدثة: تقرأ متغيرات البيئة لايف في الخلفية 
-    وتسحب أي مفتاح يبدأ اسمه بـ GEMINI صامتاً.
-    """
-    keys = []
-    for env_name, env_value in os.environ.items():
-        if env_name.startswith("GEMINI") and env_value.strip():
-            keys.append(env_value.strip())
-    return keys
-
 def get_db_connection():
     conn = psycopg2.connect(DATABASE_URL)
     conn.autocommit = True
@@ -36,7 +25,7 @@ def save_interaction(question, response):
         cursor.close()
         conn.close()
     except Exception as e:
-        # خطأ الداتابيز صامت تماماً ولا يعطل تجربة المستخدم
+        # خطأ الداتابيز صامت تماماً ولا يظهر للمستخدم
         print(f"Silent DB Error: {e}")
 
 def get_feedback_counts():
@@ -419,8 +408,16 @@ def ask():
     if "user" not in session or session.get("status") != "approved":
         return jsonify({"error": "غير مصرح لك بالاستخدام حالياً."}), 403
 
-    # النقلة النوعية: جلب كل المفاتيح "لايف" فوراً من البيئة مع كل نبضة
-    current_keys = get_all_api_keys()
+    # الحل الحاسم: قراءة صريحة ومضمونة للمفاتيح من الـ Environment مباشرة لتفادي مشاكل الـ API الـ صامتة
+    possible_keys = [
+        os.environ.get("GEMINI_API_KEY"),
+        os.environ.get("GEMINI_KEY_1"),
+        os.environ.get("GEMINI_KEY_2"),
+        os.environ.get("GEMINI_KEY_3")
+    ]
+    
+    # تنظيف وتصفية المصفوفة لايف من أي قيم فارغة أو مسافات خفية
+    current_keys = [key.strip() for key in possible_keys if key and key.strip()]
 
     data = request.get_json()
     user_question = data.get("question", "").strip()
@@ -431,6 +428,10 @@ def ask():
         return jsonify({"error": "الاستعلام فارغ"}), 400
 
     is_drawing_request = any(user_question.startswith(p) for p in ["ارسم", "انشئ صورة ل", "صورة ل", "draw", "create image"])
+
+    # فحص أمان داخلي: لو لسبب ما فيرسال عجز عن توفير المفاتيح
+    if not current_keys:
+        return jsonify({"error": "السيرفر يواجه مشكلة في العثور على مفاتيح تشغيل حية حالياً."}), 500
 
     for current_key in current_keys:
         try:
@@ -469,9 +470,11 @@ def ask():
                 return jsonify({"answer": ai_response})
 
         except Exception as e:
+            # طباعة الخطأ داخلياً في الـ Logs فقط دون كشفه للمستخدم
+            print(f"Key failed processing: {current_key[:8]}... Error: {e}")
             continue
             
-    # رسالة الخطأ العربية المنظمة والنظيفة برستيجياً بناءً على طلبك
+    # رسالة الخطأ العربية الاحترافية الموحدة عند حدوث ضغط على كل المفاتيح
     return jsonify({"error": "السيرفر عليه ضغط حالياً وعليه الانتظار ثواني."}), 500
 
 @app.route("/feedback", methods=["POST"])
