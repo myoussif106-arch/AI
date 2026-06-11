@@ -23,9 +23,9 @@ def save_interaction(question, response):
             (question, response)
         )
         cursor.close()
-        conn.conn.close()
+        conn.close()
     except Exception as e:
-        # خطأ الداتابيز صامت تماماً في الخلفية ولا يعطل السيرفر
+        # خطأ الداتابيز صامت تماماً في الخلفية ولا يظهر للمستخدم
         print(f"Silent DB Error: {e}")
 
 def get_feedback_counts():
@@ -118,7 +118,6 @@ HTML_TEMPLATE = """
         button.btn-main { width: 100%; background: linear-gradient(90deg, var(--neon-blue), var(--neon-purple)); color: white; border: none; padding: 16px; border-radius: 16px; font-weight: bold; cursor: pointer; display: flex; justify-content: center; align-items: center; gap: 12px; font-family: 'Cairo'; font-size: 18px; }
         .loading { display: none; margin: 25px 0; color: var(--neon-blue); text-align: center; font-weight:600; }
         .response-card { margin-top: 30px; padding: 25px; background: #1f242c; border-radius: 16px; display: none; border-left: 4px solid var(--neon-purple); border-right: 4px solid var(--neon-blue); white-space: pre-wrap; text-align: right; }
-        .response-card img { max-width: 100%; border-radius: 12px; margin-top: 15px; border: 2px solid var(--border-color); }
         
         .status-msg { background: #21262d; padding: 15px; border-radius: 12px; text-align: center; border: 1px solid #30363d; color: #e6edf3; }
         .feedback-section { margin-top: 40px; display: flex; flex-direction: column; align-items: center; gap: 12px; padding-top: 25px; border-top: 1px solid var(--border-color); }
@@ -151,13 +150,13 @@ HTML_TEMPLATE = """
     {% else %}
     
     <div class="input-wrapper">
-        <textarea id="questionInput" placeholder="اكتب سؤالك، أو ارفع ملف واطلب شرحه، أو اكتب 'ارسم كذا' لتوليد صورة..."></textarea>
+        <textarea id="questionInput" placeholder="اكتب سؤالك، أو ارفع صورة واطلب من المنظومة شرحها وتحليلها..."></textarea>
         <div class="tools-bar">
             <label class="file-upload-btn" for="fileInput">
-                <i class="fas fa-paperclip"></i> رفع صورة / PDF
+                <i class="fas fa-image"></i> رفع صورة فقط
             </label>
-            <input type="file" id="fileInput" accept="image/*, application/pdf" style="display: none;" onchange="handleFileSelect()">
-            <span id="fileInfo">لم يتم اختيار ملف</span>
+            <input type="file" id="fileInput" accept="image/*" style="display: none;" onchange="handleFileSelect()">
+            <span id="fileInfo">لم يتم اختيار صورة</span>
         </div>
     </div>
     
@@ -195,6 +194,14 @@ function handleFileSelect() {
     if (!fileInput.files.length) return;
     
     const file = fileInput.files[0];
+    
+    // فحص أمان مسبق للتأكد من حجم الصورة لحماية سيرفر فيرسال
+    if (file.size > 4 * 1024 * 1024) {
+        alert("حجم الصورة كبير جداً! يرجى اختيار صورة أقل من 4 ميجابايت.");
+        fileInput.value = "";
+        return;
+    }
+    
     fileInfo.innerText = file.name + " (" + (file.size/1024/1024).toFixed(2) + " MB)";
     selectedFileType = file.type;
     
@@ -217,7 +224,7 @@ async function askQuestion() {
     const responseCard = document.getElementById('responseCard'); 
     const loadingArea = document.getElementById('loadingArea');
     
-    if (!input.value.trim() && !selectedFileBase64) { alert('من فضلك أدخل استعلامك أو ارفع ملفاً أولاً!'); return; }
+    if (!input.value.trim() && !selectedFileBase64) { alert('من فضلك أدخل استعلامك أو ارفع صورة أولاً!'); return; }
     
     loadingArea.style.display = 'block'; responseCard.style.display = 'none';
     
@@ -235,10 +242,7 @@ async function askQuestion() {
         });
         const data = await res.json();
         
-        if (data.image) {
-            responseCard.innerHTML = (data.text ? "<p>"+data.text+"</p>" : "") + `<img src="data:image/png;base64,${data.image}" />`;
-            responseCard.style.display = 'block';
-        } else if (data.answer) { 
+        if (data.answer) { 
             responseCard.innerText = data.answer; 
             responseCard.style.display = 'block'; 
         } else { 
@@ -249,7 +253,7 @@ async function askQuestion() {
         selectedFileBase64 = "";
         selectedFileType = "";
         document.getElementById('fileInput').value = "";
-        document.getElementById('fileInfo').innerText = "لم يتم اختيار ملف";
+        document.getElementById('fileInfo').innerText = "لم يتم اختيار صورة";
         
     } catch (e) { 
         responseCard.innerText = "فشل في الاتصال بالخادم العصبي."; 
@@ -407,11 +411,11 @@ def ask():
     if "user" not in session or session.get("status") != "approved":
         return jsonify({"error": "غير مصرح لك بالاستخدام حالياً."}), 403
 
-    # ربط صريح ومطهر للمفاتيح من متغيرات فيرسال الفعيلة
+    # ربط صريح ومتين مع المفاتيح المتاحة في فيرسال حالياً لتفادي أي ثغرات تسمية
     possible_keys = [
         os.environ.get("GEMINI_API_KEY"),
-        os.environ.get("GEMINI_KEY_3"),
-        os.environ.get("GEMINI_KEY_2")
+        os.environ.get("GEMINI_KEY_2"),
+        os.environ.get("GEMINI_KEY_3")
     ]
     
     current_keys = [key.strip() for key in possible_keys if key and key.strip()]
@@ -424,10 +428,8 @@ def ask():
     if not user_question and not file_data:
         return jsonify({"error": "الاستعلام فارغ"}), 400
 
-    is_drawing_request = any(user_question.startswith(p) for p in ["ارسم", "انشئ صورة ل", "صورة ل", "draw", "create image"])
-
     if not current_keys:
-        return jsonify({"error": "الخادم واجه مشكلة: لم يتم العثور على أي مفاتيح تشغيل حية في السيرفر."}), 500
+        return jsonify({"error": "الخادم واجه مشكلة."}), 500
 
     last_error = "جميع المفاتيح المتاحة مخنوقة حالياً."
 
@@ -435,46 +437,83 @@ def ask():
         try:
             genai.configure(api_key=current_key)
 
-            if is_drawing_request:
-                prompt = user_question
-                for p in ["ارسم", "انشئ صورة ل", "صورة ل", "draw", "create image"]:
-                    prompt = prompt.replace(p, "").strip()
-                
-                imagen_model = genai.GenerativeModel("imagen-3.0-generate-002")
-                result = imagen_model.generate_images(prompt=prompt, number_of_images=1)
-                
-                for img in result.images:
-                    encoded_img = base64.b64encode(img.image_bytes).decode('utf-8')
-                    save_interaction(user_question, f"[توليد صورة بنجاح لـ: {prompt}]")
-                    return jsonify({"image": encoded_img, "text": f"تم معالجة النبضة العصبية البصرية لـ: {prompt}"})
+            # تشغيل نموذج الرؤية والنصوص الموحد والذكي المستقر
+            model = genai.GenerativeModel("gemini-2.5-flash")
+            contents = []
 
-            else:
-                model = genai.GenerativeModel("gemini-2.5-flash")
-                contents = []
+            # معالجة الصور المرفوعة فقط (تم إسقاط الـ PDF تماماً لحماية كاش السيرفر والليميت)
+            if file_data and file_type and file_type.startswith("image/"):
+                contents.append({
+                    'mime_type': file_type,
+                    'data': base64.b64decode(file_data)
+                })
+            
+            if user_question:
+                contents.append(user_question)
 
-                if file_data and file_type:
-                    contents.append({
-                        'mime_type': file_type,
-                        'data': base64.b64decode(file_data)
-                    })
-                
-                if user_question:
-                    contents.append(user_question)
-
-                response = model.generate_content(contents)
-                ai_response = response.text
-                
-                save_interaction(user_question, ai_response)
-                return jsonify({"answer": ai_response})
+            response = model.generate_content(contents)
+            ai_response = response.text
+            
+            save_interaction(user_question, ai_response)
+            return jsonify({"answer": ai_response})
 
         except Exception as e:
-            # تخزين نص الخطأ الفعلي اللي رجع من جوجل قبل الانتقال للمفتاح التالي
+            # تخزين الأخطاء صامتاً تماماً والانتقال للمفتاح التالي دون تنبيه المستخدم
             last_error = str(e)
-            print(f"Key failed processing: {current_key[:8]}... Error: {e}")
+            print(f"Silent Key rotation fail log: {e}")
             continue
             
-    # تعديل خط الدفاع الأخير: إرجاع الخطأ الفعلي الصريح اللي تسبب في فشل السيرفر
-    return jsonify({"error": f"الخادم واجه مشكلة: {last_error}"}), 500
+    # خط الدفاع الأخير الصريح والواضح في حالة نفاد كوتا جميع المفاتيح
+    return jsonify({"error": f"الخادم مضغوط حالياً، يرجى إعادة إرسال النبضة بعد ثوانٍ. تفاصيل: {last_error}"}), 500
+
+@app.route("/feedback", methods=["POST"])
+def feedback():
+    if "user" not in session or session.get("status") != "approved":
+        return jsonify({"status": "ignored"}), 403
+    data = request.get_json()
+    action_type = data.get("type", "")
+    if action_type in ['like', 'dislike']:
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("INSERT INTO site_feedback (action_type) VALUES (%s)", (action_type,))
+            cursor.close()
+            conn.close()
+            return jsonify({"status": "success"})
+        except:
+            pass
+    return jsonify({"status": "ignored"}), 400
+
+@app.route("/logs")
+def show_logs():
+    if "user" not in session or session["user"] != "admin":
+        return redirect("/login")
+    users_list = []
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, username, password, status, created_at FROM site_users ORDER BY id DESC")
+        users_list = cursor.fetchall()
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        return f"Error: {e}"
+    return render_template_string(ADMIN_TEMPLATE, users=users_list)
+
+@app.route("/admin/action/<int:user_id>/<string:new_status>")
+def admin_action(user_id, new_status):
+    if "user" not in session or session["user"] != "admin":
+        return redirect("/login")
+    if new_status in ['approved', 'rejected']:
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("UPDATE site_users SET status = %s WHERE id = %s", (new_status, user_id))
+            cursor.close()
+            conn.close()
+        except:
+            pass
+    return redirect("/logs")
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
