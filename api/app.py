@@ -9,7 +9,7 @@ app.secret_key = os.environ.get("FLASK_SECRET_KEY", "synapse_secret_9988")
 
 # تجميع كل الاحتمالات لأسماء المفاتيح لتفادي الـ Limit
 API_KEYS = [
-    os.environ.get("GEMINI_KEY_1"),
+   
     os.environ.get("GEMINI_KEY_2"),
     os.environ.get("GEMINI_KEY_3"),
     os.environ.get("GEMINI_API_KEY")
