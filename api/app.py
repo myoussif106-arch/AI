@@ -431,7 +431,7 @@ def ask():
     if not current_keys:
         return jsonify({"error": "الخادم واجه مشكلة."}), 500
 
-    last_error = "جميع المفاتيح المتاحة مخنوقة حالياً."
+    last_error = "الخادم واجه مشكلة."
 
     for current_key in current_keys:
         try:
