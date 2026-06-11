@@ -34,6 +34,7 @@ def save_interaction(question, response):
         cursor.close()
         conn.close()
     except Exception as e:
+        # خطأ الداتابيز صامت تماماً ولا يظهر للمخدم أو المستخدم
         print(f"Silent DB Error: {e}")
 
 def get_feedback_counts():
@@ -118,7 +119,6 @@ HTML_TEMPLATE = """
         .input-wrapper:focus-within { border-color: var(--neon-blue); }
         textarea { width: 100%; height: 110px; border: none; font-family: 'Cairo'; font-size: 16px; resize: none; outline: none; box-sizing: border-box; background: transparent; color: var(--text-bright); padding: 10px; }
         
-        /* شريط أدوات رفع الملفات */
         .tools-bar { display: flex; justify-content: space-between; align-items: center; padding: 5px 10px; border-top: 1px solid var(--border-color); margin-top: 5px; }
         .file-upload-btn { color: var(--neon-blue); cursor: pointer; font-size: 14px; display: flex; align-items: center; gap: 6px; background: #161b22; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border-color); transition: all 0.3s; }
         .file-upload-btn:hover { background: #21262d; box-shadow: 0 0 8px rgba(0, 210, 255, 0.3); }
@@ -251,11 +251,10 @@ async function askQuestion() {
             responseCard.innerText = data.answer; 
             responseCard.style.display = 'block'; 
         } else { 
-            responseCard.innerText = "عذراً: " + data.error; 
+            responseCard.innerText = data.error; 
             responseCard.style.display = 'block'; 
         }
         
-        // تصفير خانة الملفات بعد النجاح
         selectedFileBase64 = "";
         selectedFileType = "";
         document.getElementById('fileInput').value = "";
@@ -351,7 +350,7 @@ ADMIN_TEMPLATE = """
 </html>
 """
 
-# --- مسارات التطبيق المحدثة ---
+# --- مسارات التطبيق ---
 
 @app.route("/")
 def home():
@@ -425,37 +424,29 @@ def ask():
     if not user_question and not file_data:
         return jsonify({"error": "الاستعلام فارغ"}), 400
 
-    # فحص ذكي: هل المستخدم يطلب إنشاء صورة؟
     is_drawing_request = any(user_question.startswith(p) for p in ["ارسم", "انشئ صورة ل", "صورة ل", "draw", "create image"])
 
-    last_error = ""
     for current_key in API_KEYS:
         try:
             genai.configure(api_key=current_key)
 
-            # حالة 1: طلب توليد صورة باستخدام نموذج Imagen
             if is_drawing_request:
-                # تنظيف النص للحصول على الـ Prompt الصافي
                 prompt = user_question
                 for p in ["ارسم", "انشئ صورة ل", "صورة ل", "draw", "create image"]:
                     prompt = prompt.replace(p, "").strip()
                 
-                # استدعاء نموذج الصور من جوجل
                 imagen_model = genai.GenerativeModel("imagen-3.0-generate-002")
                 result = imagen_model.generate_images(prompt=prompt, number_of_images=1)
                 
-                # تحويل الصورة المستلمة لـ Base64 لإرسالها للواجهة مباشرة
                 for img in result.images:
                     encoded_img = base64.b64encode(img.image_bytes).decode('utf-8')
                     save_interaction(user_question, f"[توليد صورة بنجاح لـ: {prompt}]")
                     return jsonify({"image": encoded_img, "text": f"تم معالجة النبضة العصبية البصرية لـ: {prompt}"})
 
-            # حالة 2: محادثة عادية أو تحليل ملفات (صورة / PDF)
             else:
                 model = genai.GenerativeModel("gemini-2.5-flash")
                 contents = []
 
-                # تجهيز الملف المرفوع لو وجد صامتاً في الذاكرة
                 if file_data and file_type:
                     contents.append({
                         'mime_type': file_type,
@@ -472,10 +463,10 @@ def ask():
                 return jsonify({"answer": ai_response})
 
         except Exception as e:
-            last_error = str(e)
             continue
             
-    return jsonify({"error": f"الخادم واجه ضغطاً أثناء المعالجة العصبية. تفاصيل: {last_error}"}), 500
+    # السطر السحري المطلوب والمعدل بالملّي:
+    return jsonify({"error": "السيرفر عليه ضغط حالياً وعليه الانتظار ثواني."}), 500
 
 @app.route("/feedback", methods=["POST"])
 def feedback():
