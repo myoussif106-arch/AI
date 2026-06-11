@@ -33,6 +33,7 @@ def save_interaction(question, response):
         cursor.close()
         conn.close()
     except Exception as e:
+        # خطأ الداتابيز صامت تماماً ولا يظهر للمستخدم نهائياً
         print(f"Silent DB Error: {e}")
 
 def get_feedback_counts():
@@ -77,16 +78,16 @@ AUTH_TEMPLATE = """
     
     {% if mode == 'register' %}
     <form method="POST" action="/register">
-        <input type="text" name="username" placeholder="اسم المستخدم الدبلوماسي" required>
+        <input type="text" name="username" placeholder="اسم المستخدم" required>
         <input type="password" name="password" placeholder="كلمة المرور" required>
-        <button type="submit">إنشاء طلب انضمام عصبى</button>
+        <button type="submit">إنشاء طلب انضمام</button>
     </form>
     <a href="/login" class="toggle-link">لديك حساب بالفعل؟ سجل دخولك</a>
     {% else %}
     <form method="POST" action="/login">
         <input type="text" name="username" placeholder="اسم المستخدم" required>
         <input type="password" name="password" placeholder="كلمة المرور" required>
-        <button type="submit">تسجيل الولوج للمنظومة</button>
+        <button type="submit">تسجيل الولوج</button>
     </form>
     <a href="/register" class="toggle-link">مستخدم جديد؟ قدم طلب انضمام</a>
     {% endif %}
@@ -132,7 +133,7 @@ HTML_TEMPLATE = """
         <a href="/logout" class="logout-btn"><i class="fas fa-sign-out-alt"></i> خروج</a>
         <i class="fas fa-brain logo-icon"></i>
         <h1>SYNAPSE</h1>
-        <p>مرحباً بك يا {{ user }} في البوابة العصبية</p>
+        <p>مرحباً بك يا {{ user }} في المنظومة الذكية</p>
     </div>
 
     {% if status == 'pending' %}
@@ -143,7 +144,7 @@ HTML_TEMPLATE = """
     {% elif status == 'rejected' %}
     <div class="status-msg" style="border-color: #f85149;">
         <i class="fas fa-times-circle" style="color: #f85149; font-size: 24px; margin-bottom:10px;"></i>
-        <p>عذراً، تم رفض طلب انضمام هذا الحساب للمنظومة العصبية.</p>
+        <p>عذراً، تم رفض طلب انضمام هذا الحساب للمنظومة.</p>
     </div>
     {% else %}
     <div class="input-group">
@@ -152,11 +153,11 @@ HTML_TEMPLATE = """
     <button class="btn-main" onclick="askQuestion()">
         <span>إرسال النبضة العصبية</span> <i class="fas fa-bolt"></i>
     </button>
-    <div id="loadingArea" class="loading"><i class="fas fa-spinner fa-spin"></i> جاري توليد الاستجابة العصبية...</div>
+    <div id="loadingArea" class="loading"><i class="fas fa-spinner fa-spin"></i> جاري توليد الاستجابة...</div>
     <div id="responseCard" class="response-card"></div>
     
     <div class="feedback-section">
-        <div id="feedbackTitle" style="font-size: 14px; color: #8b949e;">ما هو تقييمك للمنصة؟</div>
+        <div id="feedbackTitle" style="font-size: 14px; color: #8b949e;">ما هو تقييمك للمنصة?</div>
         <div class="feedback-buttons">
             <button class="feedback-btn" id="likeBtn" onclick="sendFeedback('like')">
                 <i class="far fa-thumbs-up"></i> أعجبني <span class="count" id="likeCount">{{ likes }}</span>
@@ -213,7 +214,7 @@ ADMIN_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
-    <meta charset="UTF-8"><title>لوحة المدير السرية</title>
+    <meta charset="UTF-8"><title>لوحة الإشراف والتحكم</title>
     <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;700&display=swap" rel="stylesheet">
     <style>
         body { font-family: 'Cairo', sans-serif; background: #0d1117; color: #c9d1d9; padding: 30px; }
@@ -234,7 +235,7 @@ ADMIN_TEMPLATE = """
 <body>
 <div class="container">
     <h2>
-        <span><i class="fas fa-users-cog"></i> منظومة التحكم في الأعضاء الصامتة</span>
+        <span><i class="fas fa-users-cog"></i> إدارة طلبات العضوية والتحكم صامتاً</span>
         <a href="/" style="color: #58a6ff; font-size:16px; text-decoration:none;">العودة للرئيسية ←</a>
     </h2>
     <table>
@@ -242,7 +243,7 @@ ADMIN_TEMPLATE = """
             <tr>
                 <th>المستخدم</th>
                 <th>تاريخ الطلب</th>
-                <th>الحالة الحالية</th>
+                <th>الحالة</th>
                 <th>الإجراء السري</th>
             </tr>
         </thead>
@@ -264,7 +265,7 @@ ADMIN_TEMPLATE = """
                 </td>
             </tr>
             {% else %}
-            <tr><td colspan="4" style="text-align:center; color:#8b949e;">لا يوجد مستخدمين مسجلين حالياً.</td></tr>
+            <tr><td colspan="4" style="text-align:center; color:#8b949e;">لا يوجد مستخدمين مسجلين.</td></tr>
             {% endfor %}
         </tbody>
     </table>
@@ -304,7 +305,7 @@ def login():
             else:
                 return render_template_string(AUTH_TEMPLATE, mode="login", msg="خطأ في اسم المستخدم أو كلمة المرور.")
         except Exception as e:
-            return render_template_string(AUTH_TEMPLATE, mode="login", msg=f"خطأ اتصال: {e}")
+            return render_template_string(AUTH_TEMPLATE, mode="login", msg="حدث خطأ أثناء الاتصال بالخادم الداخلي.")
             
     return render_template_string(AUTH_TEMPLATE, mode="login")
 
@@ -315,19 +316,26 @@ def register():
         password = request.form.get("password", "").strip()
         
         if len(username) < 3 or len(password) < 4:
-            return render_template_string(AUTH_TEMPLATE, mode="register", msg="البيانات قصيرة جداً.")
+            return render_template_string(AUTH_TEMPLATE, mode="register", msg="البيانات المدخلة قصيرة جداً.")
             
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
+            # السطر السحري المحدث: كلمة مرور المدير معقدة جداً لمنع تحذير الاختراق التلقائي من المتصفحات
+            cursor.execute("""
+                INSERT INTO site_users (username, password, status) 
+                VALUES ('admin', 'Synapse_Admin_2026!#', 'approved')
+                ON CONFLICT (username) DO NOTHING;
+            """)
+            
             cursor.execute("INSERT INTO site_users (username, password, status) VALUES (%s, %s, 'pending')", (username, password))
             cursor.close()
             conn.close()
-            return render_template_string(AUTH_TEMPLATE, mode="login", msg="تم تقديم طلبك بنجاح! انتظر قبول المدير.")
+            return render_template_string(AUTH_TEMPLATE, mode="login", msg="تم تقديم طلبك بنجاح! يرجى انتظار المراجعة.")
         except psycopg2.errors.UniqueViolation:
             return render_template_string(AUTH_TEMPLATE, mode="register", msg="اسم المستخدم هذا محجوز مسبقاً.")
         except Exception as e:
-            return render_template_string(AUTH_TEMPLATE, mode="register", msg=f"خطأ منظومة: {e}")
+            return render_template_string(AUTH_TEMPLATE, mode="register", msg="حدث خطأ في معالجة طلب التسجيل.")
             
     return render_template_string(AUTH_TEMPLATE, mode="register")
 
@@ -339,7 +347,7 @@ def logout():
 @app.route("/ask", methods=["POST"])
 def ask():
     if "user" not in session or session.get("status") != "approved":
-        return jsonify({"error": "غير مصرح لك باستعمال الـ AI حالياً."}), 403
+        return jsonify({"error": "غير مصرح لك بالاستخدام حالياً."}), 403
 
     data = request.get_json()
     user_question = data.get("question", "")
@@ -384,7 +392,6 @@ def feedback():
 
 @app.route("/logs")
 def show_logs():
-    # جعل صفحة السجلات والتحكم حكراً على الـ admin فقط
     if "user" not in session or session["user"] != "admin":
         return redirect("/login")
         
