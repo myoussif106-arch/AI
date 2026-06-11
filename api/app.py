@@ -11,17 +11,14 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 
 def get_all_api_keys():
     """
-    الدالة السحرية الجديدة: بتدخل تلف على كل المتغيرات في فيرسال
-    وأي متغير اسمه بيبدأ بـ GEMINI بتاخده وتضيفه في القائمة فوراً
+    الدالة السحرية المحدثة: تقرأ متغيرات البيئة لايف في الخلفية 
+    وتسحب أي مفتاح يبدأ اسمه بـ GEMINI صامتاً.
     """
     keys = []
     for env_name, env_value in os.environ.items():
         if env_name.startswith("GEMINI") and env_value.strip():
             keys.append(env_value.strip())
     return keys
-
-# جلب القائمة المرنة للمفاتيح
-API_KEYS = get_all_api_keys()
 
 def get_db_connection():
     conn = psycopg2.connect(DATABASE_URL)
@@ -39,6 +36,7 @@ def save_interaction(question, response):
         cursor.close()
         conn.close()
     except Exception as e:
+        # خطأ الداتابيز صامت تماماً ولا يعطل تجربة المستخدم
         print(f"Silent DB Error: {e}")
 
 def get_feedback_counts():
@@ -354,7 +352,7 @@ ADMIN_TEMPLATE = """
 </html>
 """
 
-# --- مسارات التطبيق ---
+# --- مسارات التطبيق والتحكم بالـ Sessions ---
 
 @app.route("/")
 def home():
@@ -395,6 +393,7 @@ def register():
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
+            # حماية حساب المدير صامتاً بباسورد معقدة لمنع تنبيهات الاختراق من المتصفحات
             cursor.execute("""
                 INSERT INTO site_users (username, password, status) 
                 VALUES ('admin', 'Synapse_Admin_2026!#', 'approved')
@@ -418,9 +417,9 @@ def logout():
 @app.route("/ask", methods=["POST"])
 def ask():
     if "user" not in session or session.get("status") != "approved":
-        return redirect("/login")
+        return jsonify({"error": "غير مصرح لك بالاستخدام حالياً."}), 403
 
-    # جلب قائمة المفاتيح الحية في ثانية الطلب أوتوماتيكياً
+    # النقلة النوعية: جلب كل المفاتيح "لايف" فوراً من البيئة مع كل نبضة
     current_keys = get_all_api_keys()
 
     data = request.get_json()
@@ -472,6 +471,7 @@ def ask():
         except Exception as e:
             continue
             
+    # رسالة الخطأ العربية المنظمة والنظيفة برستيجياً بناءً على طلبك
     return jsonify({"error": "السيرفر عليه ضغط حالياً وعليه الانتظار ثواني."}), 500
 
 @app.route("/feedback", methods=["POST"])
