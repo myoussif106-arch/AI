@@ -25,7 +25,6 @@ def save_interaction(question, response):
         cursor.close()
         conn.close()
     except Exception as e:
-        # خطأ الداتابيز صامت تماماً في الخلفية
         print(f"Silent DB Error: {e}")
 
 def get_feedback_counts():
@@ -407,15 +406,16 @@ def ask():
     if "user" not in session or session.get("status") != "approved":
         return jsonify({"error": "غير مصرح لك بالاستخدام حالياً."}), 403
 
-    # ربط صريح ومطابق لأسماء المتغيرات الفعيلة في فيرسال بعد تعديل الاسم
-    possible_keys = [
-        os.environ.get("GEMINI_API_KEY"),
+    # حرق المفتاح النظيف الفريش الجديد اللي اتأكدنا منه يدوياً جوه الكود مباشرة
+    # استبدل النص اللي تحت بـ مفتاحك الجديد بالملي
+    current_keys = [
+        "AIzaSy...........................", # حط هنا المفتاح الجديد الفريش بتاعك بين علامتين التنصيص
         os.environ.get("GEMINI_KEY_1"),
         os.environ.get("GEMINI_KEY_2")
     ]
     
-    # تنظيف القائمة لايف وتصفيتها من أي فراغات
-    current_keys = [key.strip() for key in possible_keys if key and key.strip()]
+    # فلترة سريعة صامتة
+    current_keys = [k.strip() for k in current_keys if k and k.strip()]
 
     data = request.get_json()
     user_question = data.get("question", "").strip()
@@ -426,9 +426,6 @@ def ask():
         return jsonify({"error": "الاستعلام فارغ"}), 400
 
     is_drawing_request = any(user_question.startswith(p) for p in ["ارسم", "انشئ صورة ل", "صورة ل", "draw", "create image"])
-
-    if not current_keys:
-        return jsonify({"error": "السيرفر يواجه مشكلة في العثور على مفاتيح تشغيل حية حالياً."}), 500
 
     for current_key in current_keys:
         try:
@@ -467,60 +464,10 @@ def ask():
                 return jsonify({"answer": ai_response})
 
         except Exception as e:
-            # طباعة الخطأ صامتاً في الـ Logs والانتقال فوراً للمفتاح الفريش التالي
-            print(f"Key failed processing: {current_key[:8]}... Error: {e}")
+            print(f"Key rotation bypass error: {e}")
             continue
             
     return jsonify({"error": "السيرفر عليه ضغط حالياً وعليه الانتظار ثواني."}), 500
-
-@app.route("/feedback", methods=["POST"])
-def feedback():
-    if "user" not in session or session.get("status") != "approved":
-        return jsonify({"status": "ignored"}), 403
-    data = request.get_json()
-    action_type = data.get("type", "")
-    if action_type in ['like', 'dislike']:
-        try:
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute("INSERT INTO site_feedback (action_type) VALUES (%s)", (action_type,))
-            cursor.close()
-            conn.close()
-            return jsonify({"status": "success"})
-        except:
-            pass
-    return jsonify({"status": "ignored"}), 400
-
-@app.route("/logs")
-def show_logs():
-    if "user" not in session or session["user"] != "admin":
-        return redirect("/login")
-    users_list = []
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, username, password, status, created_at FROM site_users ORDER BY id DESC")
-        users_list = cursor.fetchall()
-        cursor.close()
-        conn.close()
-    except Exception as e:
-        return f"Error: {e}"
-    return render_template_string(ADMIN_TEMPLATE, users=users_list)
-
-@app.route("/admin/action/<int:user_id>/<string:new_status>")
-def admin_action(user_id, new_status):
-    if "user" not in session or session["user"] != "admin":
-        return redirect("/login")
-    if new_status in ['approved', 'rejected']:
-        try:
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute("UPDATE site_users SET status = %s WHERE id = %s", (new_status, user_id))
-            cursor.close()
-            conn.close()
-        except:
-            pass
-    return redirect("/logs")
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
