@@ -7,6 +7,15 @@ import psycopg2
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "synapse_secret_9988")
 
+# تجميع كل الاحتمالات لأسماء المفاتيح لتفادي الـ Limit
+API_KEYS = [
+    os.environ.get("GEMINI_KEY_1"),
+    os.environ.get("GEMINI_KEY_2"),
+    os.environ.get("GEMINI_KEY_3"),
+    os.environ.get("GEMINI_API_KEY")
+]
+API_KEYS = [key for key in API_KEYS if key]
+
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 def get_db_connection():
@@ -25,7 +34,7 @@ def save_interaction(question, response):
         cursor.close()
         conn.close()
     except Exception as e:
-        # خطأ الداتابيز صامت تماماً ولا يظهر للمستخدم
+        # خطأ الداتابيز صامت تماماً ولا يظهر للمخدم أو المستخدم
         print(f"Silent DB Error: {e}")
 
 def get_feedback_counts():
@@ -341,7 +350,7 @@ ADMIN_TEMPLATE = """
 </html>
 """
 
-# --- مسارات التطبيق والتحكم بالـ Sessions ---
+# --- مسارات التطبيق ---
 
 @app.route("/")
 def home():
@@ -382,7 +391,6 @@ def register():
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
-            # حماية حساب المدير صامتاً بباسورد معقدة لمنع تنبيهات الاختراق من المتصفحات
             cursor.execute("""
                 INSERT INTO site_users (username, password, status) 
                 VALUES ('admin', 'Synapse_Admin_2026!#', 'approved')
@@ -408,17 +416,6 @@ def ask():
     if "user" not in session or session.get("status") != "approved":
         return jsonify({"error": "غير مصرح لك بالاستخدام حالياً."}), 403
 
-    # الحل الحاسم: قراءة صريحة ومضمونة للمفاتيح من الـ Environment مباشرة لتفادي مشاكل الـ API الـ صامتة
-    possible_keys = [
-        os.environ.get("GEMINI_API_KEY"),
-        os.environ.get("GEMINI_KEY_1"),
-        os.environ.get("GEMINI_KEY_2"),
-        os.environ.get("GEMINI_KEY_3")
-    ]
-    
-    # تنظيف وتصفية المصفوفة لايف من أي قيم فارغة أو مسافات خفية
-    current_keys = [key.strip() for key in possible_keys if key and key.strip()]
-
     data = request.get_json()
     user_question = data.get("question", "").strip()
     file_data = data.get("fileData", "")
@@ -429,11 +426,7 @@ def ask():
 
     is_drawing_request = any(user_question.startswith(p) for p in ["ارسم", "انشئ صورة ل", "صورة ل", "draw", "create image"])
 
-    # فحص أمان داخلي: لو لسبب ما فيرسال عجز عن توفير المفاتيح
-    if not current_keys:
-        return jsonify({"error": "السيرفر يواجه مشكلة في العثور على مفاتيح تشغيل حية حالياً."}), 500
-
-    for current_key in current_keys:
+    for current_key in API_KEYS:
         try:
             genai.configure(api_key=current_key)
 
@@ -470,11 +463,9 @@ def ask():
                 return jsonify({"answer": ai_response})
 
         except Exception as e:
-            # طباعة الخطأ داخلياً في الـ Logs فقط دون كشفه للمستخدم
-            print(f"Key failed processing: {current_key[:8]}... Error: {e}")
             continue
             
-    # رسالة الخطأ العربية الاحترافية الموحدة عند حدوث ضغط على كل المفاتيح
+    # السطر السحري المطلوب والمعدل بالملّي:
     return jsonify({"error": "السيرفر عليه ضغط حالياً وعليه الانتظار ثواني."}), 500
 
 @app.route("/feedback", methods=["POST"])
