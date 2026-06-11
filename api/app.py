@@ -79,7 +79,7 @@ AUTH_TEMPLATE = """
     <form method="POST" action="/login">
         <input type="text" name="username" placeholder="اسم المستخدم" required>
         <input type="password" name="password" placeholder="كلمة المرور" required>
-        <button type="submit">تسجيل الولوج</button>
+        <button type="submit">تسجيل الدخول</button>
     </form>
     <a href="/register" class="toggle-link">مستخدم جديد؟ قدم طلب انضمام</a>
     {% endif %}
@@ -410,7 +410,7 @@ def ask():
     # ربط صريح ومطهر للمفاتيح من متغيرات فيرسال الفعيلة
     possible_keys = [
         os.environ.get("GEMINI_API_KEY"),
-        os.environ.get("GEMINI_KEY_1"),
+        os.environ.get("GEMINI_KEY_3"),
         os.environ.get("GEMINI_KEY_2")
     ]
     
