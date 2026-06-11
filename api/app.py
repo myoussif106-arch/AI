@@ -241,10 +241,6 @@ async function askQuestion() {
         } else if (data.answer) { 
             responseCard.innerText = data.answer; 
             responseCard.style.display = 'block'; 
-        } else if (data.debug_keys_found_in_vercel) {
-            // عرض لستة الديباج بشكل منظم لو المصفوفة فاضية
-            responseCard.innerHTML = `<p style="color:#ff7b72; font-weight:bold;">${data.error}</p><p>المفاتيح المتاحة بالسيرفر حالياً:</p><pre style="background:#090d13; padding:10px; border-radius:8px; text-align:left; direction:ltr;">${JSON.stringify(data.debug_keys_found_in_vercel, null, 2)}</pre>`;
-            responseCard.style.display = 'block';
         } else { 
             responseCard.innerText = data.error; 
             responseCard.style.display = 'block'; 
@@ -411,14 +407,14 @@ def ask():
     if "user" not in session or session.get("status") != "approved":
         return jsonify({"error": "غير مصرح لك بالاستخدام حالياً."}), 403
 
-    # ربط صريح ومطهر للمفاتيح من متغيرات فيرسال
+    # ربط صريح ومطابق لأسماء المتغيرات الفعيلة في فيرسال بعد تعديل الاسم
     possible_keys = [
         os.environ.get("GEMINI_API_KEY"),
         os.environ.get("GEMINI_KEY_1"),
-        os.environ.get("GEMINI_KEY_2"),
-        os.environ.get("GEMINI_KEY_3")
+        os.environ.get("GEMINI_KEY_2")
     ]
     
+    # تنظيف القائمة لايف وتصفيتها من أي فراغات
     current_keys = [key.strip() for key in possible_keys if key and key.strip()]
 
     data = request.get_json()
@@ -431,13 +427,8 @@ def ask():
 
     is_drawing_request = any(user_question.startswith(p) for p in ["ارسم", "انشئ صورة ل", "صورة ل", "draw", "create image"])
 
-    # عيون الديباج الذكية: لو لستة المفاتيح فاضية، اطبع الأسماء المتاحة في السيرفر حالا
     if not current_keys:
-        all_env_names = list(os.environ.keys())
-        return jsonify({
-            "error": "خطأ مطابقة: السيرفر لم ينجح في العثور على قيم حية للمفاتيح المدخلة.",
-            "debug_keys_found_in_vercel": all_env_names
-        }), 500
+        return jsonify({"error": "السيرفر يواجه مشكلة في العثور على مفاتيح تشغيل حية حالياً."}), 500
 
     for current_key in current_keys:
         try:
@@ -476,6 +467,7 @@ def ask():
                 return jsonify({"answer": ai_response})
 
         except Exception as e:
+            # طباعة الخطأ صامتاً في الـ Logs والانتقال فوراً للمفتاح الفريش التالي
             print(f"Key failed processing: {current_key[:8]}... Error: {e}")
             continue
             
