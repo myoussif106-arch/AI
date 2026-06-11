@@ -7,16 +7,21 @@ import psycopg2
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "synapse_secret_9988")
 
-# تجميع كل الاحتمالات لأسماء المفاتيح لتفادي الـ Limit
-API_KEYS = [
-    os.environ.get("GEMINI_KEY_1"),
-    os.environ.get("GEMINI_KEY_2"),
-    os.environ.get("GEMINI_KEY_3"),
-    os.environ.get("GEMINI_API_KEY")
-]
-API_KEYS = [key for key in API_KEYS if key]
-
 DATABASE_URL = os.environ.get("DATABASE_URL")
+
+def get_all_api_keys():
+    """
+    الدالة السحرية الجديدة: بتدخل تلف على كل المتغيرات في فيرسال
+    وأي متغير اسمه بيبدأ بـ GEMINI بتاخده وتضيفه في القائمة فوراً
+    """
+    keys = []
+    for env_name, env_value in os.environ.items():
+        if env_name.startswith("GEMINI") and env_value.strip():
+            keys.append(env_value.strip())
+    return keys
+
+# جلب القائمة المرنة للمفاتيح
+API_KEYS = get_all_api_keys()
 
 def get_db_connection():
     conn = psycopg2.connect(DATABASE_URL)
@@ -34,7 +39,6 @@ def save_interaction(question, response):
         cursor.close()
         conn.close()
     except Exception as e:
-        # خطأ الداتابيز صامت تماماً ولا يظهر للمخدم أو المستخدم
         print(f"Silent DB Error: {e}")
 
 def get_feedback_counts():
@@ -414,7 +418,10 @@ def logout():
 @app.route("/ask", methods=["POST"])
 def ask():
     if "user" not in session or session.get("status") != "approved":
-        return jsonify({"error": "غير مصرح لك بالاستخدام حالياً."}), 403
+        return redirect("/login")
+
+    # جلب قائمة المفاتيح الحية في ثانية الطلب أوتوماتيكياً
+    current_keys = get_all_api_keys()
 
     data = request.get_json()
     user_question = data.get("question", "").strip()
@@ -426,7 +433,7 @@ def ask():
 
     is_drawing_request = any(user_question.startswith(p) for p in ["ارسم", "انشئ صورة ل", "صورة ل", "draw", "create image"])
 
-    for current_key in API_KEYS:
+    for current_key in current_keys:
         try:
             genai.configure(api_key=current_key)
 
@@ -465,7 +472,6 @@ def ask():
         except Exception as e:
             continue
             
-    # السطر السحري المطلوب والمعدل بالملّي:
     return jsonify({"error": "السيرفر عليه ضغط حالياً وعليه الانتظار ثواني."}), 500
 
 @app.route("/feedback", methods=["POST"])
